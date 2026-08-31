@@ -24,7 +24,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
 
-  <link rel="stylesheet" href="styles.css?v=v40.13-mgmec">
+  <link rel="stylesheet" href="styles.css?v=v40.15-mgmec">
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', function() {
@@ -364,11 +364,9 @@
           <div class="hod-header-card" style="margin-top: 0;">
             <div class="hod-filter-row" style="margin-top: 0;">
               <div class="form-group" style="flex: 1; min-width: 140px;">
-                <label for="hodStreamSelect">Department</label>
-                <select id="hodStreamSelect" class="form-select">
+                <label for="hodStreamSelect">Department <span style="font-weight: 500; opacity: 0.75;">(your stream only)</span></label>
+                <select id="hodStreamSelect" class="form-select" disabled title="Locked to your logged-in stream">
                   <option value="BCA" selected>BCA (Computer Applications)</option>
-                  <option value="BCOM">B.Com (Bachelor of Commerce)</option>
-                  <option value="BBA">BBA (Business Administration)</option>
                 </select>
               </div>
               
@@ -415,10 +413,8 @@
             <div class="hod-filter-row" style="margin-bottom: 8px; margin-top: 0;">
               <div class="form-group" style="flex: 1; min-width: 110px;">
                 <label for="shortageDeptSelect">Department</label>
-                <select id="shortageDeptSelect" class="form-select">
+                <select id="shortageDeptSelect" class="form-select" disabled title="Locked to your logged-in stream">
                   <option value="BCA" selected>BCA</option>
-                  <option value="BCOM">B.Com</option>
-                  <option value="BBA">BBA</option>
                 </select>
               </div>
               <div class="form-group" style="flex: 1; min-width: 110px;">
@@ -489,12 +485,103 @@
               <span id="shortageCalculateBtnText">📊 Calculate Shortage Report</span>
               <div class="spinner" id="shortageSpinner" style="display: none;"></div>
             </button>
+            <button type="button" class="btn-secondary" id="openBulkGeneratorModalBtn" style="width: 100%; margin-top: 10px; font-weight: 700; background: rgba(99,102,241,0.12); color: #a5b4fc; border: 1px solid rgba(99,102,241,0.3); padding: 9px 16px; border-radius: 8px; cursor: pointer; display: flex; justify-content: center; align-items: center; gap: 8px;">
+              ⚡ Bulk Past Class Generator
+            </button>
           </div>
 
           <div id="shortageResultsContainer" style="display: none; margin-top: 14px;"></div>
         </div>
       </div>
 
+    </div>
+
+    <!-- Bulk Past Class Generator Modal -->
+    <div class="modal-overlay" id="bulkGeneratorModal">
+      <div class="modal-card" style="max-width: 460px;">
+        <div class="modal-header">
+          <h2>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#818cf8" stroke-width="2.5">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+            </svg>
+            Bulk Past Class Generator
+          </h2>
+          <button class="icon-btn" id="closeBulkModalBtn" aria-label="Close modal">&times;</button>
+        </div>
+        <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 14px; line-height: 1.4;">
+          Auto-generate conducted class entries for past dates. All generated classes default to <strong>NIL (All Present)</strong> so you only need to edit absentees for dates students missed.
+        </p>
+
+        <form id="bulkGeneratorForm" onsubmit="return false;">
+          <div class="form-row">
+            <div class="form-group">
+              <label for="bulkYearSelect">Year</label>
+              <select id="bulkYearSelect" class="form-select" required>
+                <option value="First Year">First Year</option>
+                <option value="Second Year" selected>Second Year</option>
+                <option value="Third Year">Third Year</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="bulkSectionSelect">Section</label>
+              <select id="bulkSectionSelect" class="form-select" required>
+                <option value="A">Section A</option>
+                <option value="B">Section B</option>
+                <option value="ALL">Combined (Sec A &amp; B / Electives)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="bulkSubjectInput">Subject</label>
+              <select id="bulkSubjectInput" class="form-select" required></select>
+            </div>
+            <div class="form-group">
+              <label for="bulkSlotSelect">Slot / Time Period</label>
+              <select id="bulkSlotSelect" class="form-select" required>
+                <option value="1">Slot 1</option>
+                <option value="2">Slot 2</option>
+                <option value="3">Slot 3</option>
+                <option value="4">Slot 4</option>
+                <option value="5">Slot 5</option>
+                <option value="6">Slot 6</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="bulkStartDate">Start Date</label>
+              <input type="date" id="bulkStartDate" class="form-input" required>
+            </div>
+            <div class="form-group">
+              <label for="bulkEndDate">End Date</label>
+              <input type="date" id="bulkEndDate" class="form-input" required>
+            </div>
+          </div>
+
+          <div class="form-group" style="margin-bottom: 14px;">
+            <label style="margin-bottom: 6px; font-weight: 600;">Class Days (Days of Week)</label>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap; padding: 8px 10px; background: rgba(0,0,0,0.2); border-radius: 8px;">
+              <label style="font-size: 0.82rem; display: flex; align-items: center; gap: 4px; cursor: pointer;"><input type="checkbox" class="bulkDayCheck" value="1" checked /> Mon</label>
+              <label style="font-size: 0.82rem; display: flex; align-items: center; gap: 4px; cursor: pointer;"><input type="checkbox" class="bulkDayCheck" value="2" checked /> Tue</label>
+              <label style="font-size: 0.82rem; display: flex; align-items: center; gap: 4px; cursor: pointer;"><input type="checkbox" class="bulkDayCheck" value="3" checked /> Wed</label>
+              <label style="font-size: 0.82rem; display: flex; align-items: center; gap: 4px; cursor: pointer;"><input type="checkbox" class="bulkDayCheck" value="4" checked /> Thu</label>
+              <label style="font-size: 0.82rem; display: flex; align-items: center; gap: 4px; cursor: pointer;"><input type="checkbox" class="bulkDayCheck" value="5" checked /> Fri</label>
+              <label style="font-size: 0.82rem; display: flex; align-items: center; gap: 4px; cursor: pointer;"><input type="checkbox" class="bulkDayCheck" value="6" /> Sat</label>
+            </div>
+          </div>
+
+          <div class="modal-buttons" style="margin-top: 14px;">
+            <button type="button" class="btn-secondary" id="cancelBulkModalBtn">Cancel</button>
+            <button type="submit" class="btn-primary" id="submitBulkBtn" style="background: linear-gradient(135deg, #6366f1, #4f46e5); font-weight: 700;">
+              <span id="submitBulkBtnText">⚡ Generate Past Classes</span>
+              <div class="spinner" id="submitBulkSpinner" style="display: none;"></div>
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
 
     <!-- Confirmation Modal Form -->
@@ -783,7 +870,7 @@
 
   <datalist id="subjectDatalist"></datalist>
 
-  <script src="parser.js?v=v40.13-mgmec"></script>
-  <script src="app.js?v=v40.13-mgmec"></script>
+  <script src="parser.js?v=v40.15-mgmec"></script>
+  <script src="app.js?v=v40.15-mgmec"></script>
 </body>
 </html>

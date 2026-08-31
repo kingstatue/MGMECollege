@@ -2893,14 +2893,16 @@ function updateSectionDropdownOptions(deptCode) {
 
     const sectionSelects = [
         document.getElementById('directSectionSelect'),
-        document.getElementById('sectionSelect')
+        document.getElementById('sectionSelect'),
+        document.getElementById('bulkSectionSelect')
     ];
 
     sectionSelects.forEach(sel => {
         if (!sel) return;
         const currentVal = sel.value;
+        const isBulk = sel.id === 'bulkSectionSelect';
         sel.innerHTML = '';
-        addSelectPlaceholder(sel, 'Select Section');
+        if (!isBulk) addSelectPlaceholder(sel, 'Select Section');
         if (deptConfig.hasSections) {
             // BCA: Sec A, Sec B, Combined
             const optA = document.createElement('option');
@@ -2914,7 +2916,11 @@ function updateSectionDropdownOptions(deptCode) {
             sel.appendChild(optB);
             sel.appendChild(optAll);
 
-            sel.value = (currentVal === 'A' || currentVal === 'B' || currentVal === 'ALL') ? currentVal : '';
+            if (isBulk) {
+                sel.value = (currentVal === 'A' || currentVal === 'B' || currentVal === 'ALL') ? currentVal : 'A';
+            } else {
+                sel.value = (currentVal === 'A' || currentVal === 'B' || currentVal === 'ALL') ? currentVal : '';
+            }
         } else {
             // BCom / BBA: Main Class (ONLY), Combined (ALL)
             const optMain = document.createElement('option');
@@ -2925,7 +2931,11 @@ function updateSectionDropdownOptions(deptCode) {
             sel.appendChild(optMain);
             sel.appendChild(optAll);
 
-            sel.value = (currentVal === 'ONLY' || currentVal === 'ALL') ? currentVal : '';
+            if (isBulk) {
+                sel.value = (currentVal === 'ONLY' || currentVal === 'ALL') ? currentVal : 'ONLY';
+            } else {
+                sel.value = (currentVal === 'ONLY' || currentVal === 'ALL') ? currentVal : '';
+            }
         }
     });
 }
@@ -2937,14 +2947,16 @@ function updateSlotDropdownOptions(dateVal) {
 
     const slotSelects = [
         document.getElementById('directSlotSelect'),
-        document.getElementById('slotSelect')
+        document.getElementById('slotSelect'),
+        document.getElementById('bulkSlotSelect')
     ];
 
     slotSelects.forEach(sel => {
         if (!sel) return;
         const currentVal = sel.value;
+        const isBulk = sel.id === 'bulkSlotSelect';
         sel.innerHTML = '';
-        addSelectPlaceholder(sel, 'Select Slot');
+        if (!isBulk) addSelectPlaceholder(sel, 'Select Slot');
         for (let i = 1; i <= 6; i++) {
             const opt = document.createElement('option');
             opt.value = String(i);
@@ -2952,7 +2964,11 @@ function updateSlotDropdownOptions(dateVal) {
             sel.appendChild(opt);
         }
         const slotNum = parseInt(currentVal, 10);
-        sel.value = (slotNum >= 1 && slotNum <= 6) ? String(slotNum) : '';
+        if (isBulk) {
+            sel.value = (slotNum >= 1 && slotNum <= 6) ? String(slotNum) : '1';
+        } else {
+            sel.value = (slotNum >= 1 && slotNum <= 6) ? String(slotNum) : '';
+        }
     });
 }
 
@@ -3006,22 +3022,46 @@ function updateSamplePresetsUI() {
 function applyRoleUI() {
     const hodRoleBadge = document.getElementById('hodRoleBadge');
     const hodStreamSelect = document.getElementById('hodStreamSelect');
+    const shortageDeptSelect = document.getElementById('shortageDeptSelect');
     const hodFetchBtnText = document.getElementById('hodFetchBtnText');
     const deptConfig = DEPT_CONFIG[currentDept] || DEPT_CONFIG.BCA;
+    const stream = currentDept || 'BCA';
+    const deptLabel = stream === 'BCOM' ? 'B.Com' : stream;
 
-    if (hodStreamSelect) {
-        hodStreamSelect.value = currentDept || 'BCA';
-        hodStreamSelect.disabled = false;
-    }
+    lockStreamSelectToDept(hodStreamSelect, stream);
+    lockStreamSelectToDept(shortageDeptSelect, stream);
 
     if (hodRoleBadge) {
-        hodRoleBadge.style.display = 'none';
-        hodRoleBadge.textContent = '';
+        hodRoleBadge.style.display = '';
+        hodRoleBadge.className = 'badge badge-success';
+        hodRoleBadge.textContent = '🔒 Parent Informer (' + deptLabel + ')';
     }
 
     if (hodFetchBtnText) {
-        hodFetchBtnText.textContent = `🔄 Fetch ${deptConfig.code} Absentees`;
+        hodFetchBtnText.textContent = `🔄 Fetch ${deptLabel} Absentees`;
     }
+}
+
+/** Parent Informer / Shortage: only the logged-in stream (BCA→BCA, BCOM→BCOM, BBA→BBA). */
+function lockStreamSelectToDept(selectEl, deptCode) {
+    if (!selectEl) return;
+    const dept = (deptCode || currentDept || 'BCA').toUpperCase();
+    const labels = {
+        BCA: 'BCA (Computer Applications)',
+        BCOM: 'B.Com (Bachelor of Commerce)',
+        BBA: 'BBA (Business Administration)'
+    };
+    const shortLabels = { BCA: 'BCA', BCOM: 'B.Com', BBA: 'BBA' };
+    const isShortage = selectEl.id === 'shortageDeptSelect';
+    selectEl.innerHTML = '';
+    const opt = document.createElement('option');
+    opt.value = dept;
+    opt.textContent = isShortage ? (shortLabels[dept] || dept) : (labels[dept] || dept);
+    opt.selected = true;
+    selectEl.appendChild(opt);
+    selectEl.value = dept;
+    selectEl.disabled = true;
+    selectEl.title = 'Locked to your logged-in stream (' + (shortLabels[dept] || dept) + ')';
 }
 
 function applyDepartment(deptCode) {
@@ -3926,6 +3966,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     initHODPortal();
     initShortageCalculator();
+    initBulkGenerator();
 
     // Voice Actions
     if (micBtn) micBtn.addEventListener('click', toggleListening);
@@ -4535,6 +4576,197 @@ function renderSubjectChips() {
     });
 }
 
+/* BULK PAST CLASS GENERATOR (same flow as att_appAllstreams) */
+function updateBulkSubjectDropdown() {
+    const bYear = document.getElementById('bulkYearSelect');
+    const bSec = document.getElementById('bulkSectionSelect');
+    const bSubj = document.getElementById('bulkSubjectInput');
+    if (bYear && bSec && bSubj) {
+        const yrVal = bYear.value || 'Second Year';
+        const secVal = bSec.value || (DEPT_CONFIG[currentDept] && !DEPT_CONFIG[currentDept].hasSections ? 'ONLY' : 'A');
+        const list = getSubjectsForActiveYear(currentDept, yrVal, secVal);
+        bSubj.innerHTML = list.map(s => `<option value="${escapeHTML(s)}">${escapeHTML(s)}</option>`).join('');
+    }
+}
+
+function openBulkGeneratorModal() {
+    const modal = document.getElementById('bulkGeneratorModal');
+    if (!modal) return;
+    updateSectionDropdownOptions(currentDept);
+    const startEl = document.getElementById('bulkStartDate');
+    const endEl = document.getElementById('bulkEndDate');
+    const today = getTodayISOString();
+    if (startEl && !startEl.value) startEl.value = today;
+    if (endEl && !endEl.value) endEl.value = today;
+    updateSlotDropdownOptions((startEl && startEl.value) || today);
+    updateBulkSubjectDropdown();
+    modal.classList.add('active');
+}
+
+function closeBulkGeneratorModal() {
+    const modal = document.getElementById('bulkGeneratorModal');
+    if (modal) modal.classList.remove('active');
+}
+
+async function executeBulkPastGenerator() {
+    const yearEl = document.getElementById('bulkYearSelect');
+    const secEl = document.getElementById('bulkSectionSelect');
+    const subjEl = document.getElementById('bulkSubjectInput');
+    const slotEl = document.getElementById('bulkSlotSelect');
+    const startEl = document.getElementById('bulkStartDate');
+    const endEl = document.getElementById('bulkEndDate');
+
+    const yearVal = yearEl ? yearEl.value : '';
+    const secVal = secEl ? secEl.value : '';
+    const subjVal = subjEl ? subjEl.value : '';
+    const slotVal = slotEl ? slotEl.value : '1';
+    const startVal = startEl ? startEl.value : '';
+    const endVal = endEl ? endEl.value : '';
+    const checkedDays = Array.from(document.querySelectorAll('.bulkDayCheck:checked')).map(c => parseInt(c.value, 10));
+
+    if (!subjVal) {
+        alert('Please select a Subject Name.');
+        return;
+    }
+    if (!startVal || !endVal) {
+        alert('Please select both Start Date and End Date.');
+        return;
+    }
+    if (new Date(startVal) > new Date(endVal)) {
+        alert('Start Date cannot be after End Date.');
+        return;
+    }
+    if (checkedDays.length === 0) {
+        alert('Please select at least one day of the week.');
+        return;
+    }
+
+    const btnText = document.getElementById('submitBulkBtnText');
+    const spinner = document.getElementById('submitBulkSpinner');
+    const submitBtn = document.getElementById('submitBulkBtn');
+
+    if (btnText) btnText.textContent = 'Generating...';
+    if (spinner) spinner.style.display = 'inline-block';
+    if (submitBtn) submitBtn.disabled = true;
+
+    try {
+        const parts1 = startVal.split('-');
+        const parts2 = endVal.split('-');
+        const startDate = new Date(parseInt(parts1[0], 10), parseInt(parts1[1], 10) - 1, parseInt(parts1[2], 10));
+        const endDate = new Date(parseInt(parts2[0], 10), parseInt(parts2[1], 10) - 1, parseInt(parts2[2], 10));
+
+        const generatedItems = [];
+        const curr = new Date(startDate.getTime());
+
+        while (curr.getTime() <= endDate.getTime()) {
+            const dayOfWeek = curr.getDay();
+            if (checkedDays.includes(dayOfWeek)) {
+                const yyyy = curr.getFullYear();
+                const mm = String(curr.getMonth() + 1).padStart(2, '0');
+                const dd = String(curr.getDate()).padStart(2, '0');
+                const dateStr = yyyy + '-' + mm + '-' + dd;
+
+                generatedItems.push({
+                    stream: currentDept || 'BCA',
+                    date: dateStr,
+                    year: yearVal,
+                    section: secVal,
+                    subject: subjVal,
+                    slot: String(parseInt(slotVal, 10) || 1),
+                    rollNumbers: 'NIL',
+                    offline: false,
+                    timestamp: 'Bulk Past Entry'
+                });
+            }
+            curr.setDate(curr.getDate() + 1);
+        }
+
+        if (generatedItems.length === 0) {
+            alert('No matching class days found in the selected date range.');
+            return;
+        }
+
+        for (const item of generatedItems) {
+            saveToLocalHistory(item);
+        }
+
+        closeBulkGeneratorModal();
+
+        const secLabel = secVal === 'ONLY' ? 'Main' : (secVal === 'ALL' ? 'Combined' : ('Sec ' + secVal));
+        showCustomToast('⚡ Created ' + generatedItems.length + ' Past Classes!', 'Added for ' + yearVal + ' ' + secLabel + ' (' + subjVal + '). Edit absentees as needed.');
+        try { renderHistoryList(); } catch (e) {}
+        try { updateTodayBadge(); } catch (e) {}
+
+        (async () => {
+            const targetUrl = getWebhookUrl(currentDept);
+            if (!targetUrl) return;
+            for (const item of generatedItems) {
+                const payload = withAuth({
+                    action: 'create',
+                    isUpdate: false,
+                    stream: item.stream,
+                    date: item.date,
+                    rollNumbers: 'NIL',
+                    year: item.year,
+                    section: item.section,
+                    subject: item.subject,
+                    slot: item.slot,
+                    changesSummary: 'Bulk Past Class Entry'
+                });
+                try {
+                    await postWithRetry(targetUrl, payload, 1);
+                } catch (e) {
+                    console.warn('Bulk item sheet sync error:', e);
+                    try {
+                        saveToLocalHistory({ ...item, offline: true, action: 'create', changesSummary: 'Bulk Past Class Entry (pending sync)' });
+                    } catch (e2) {}
+                }
+            }
+        })();
+
+    } catch (err) {
+        console.error('Bulk Generator Error:', err);
+        alert('An error occurred while generating past classes.');
+    } finally {
+        if (btnText) btnText.textContent = '⚡ Generate Past Classes';
+        if (spinner) spinner.style.display = 'none';
+        if (submitBtn) submitBtn.disabled = false;
+    }
+}
+
+function initBulkGenerator() {
+    const openBulkBtn = document.getElementById('openBulkGeneratorModalBtn');
+    const closeBulkBtn = document.getElementById('closeBulkModalBtn');
+    const cancelBulkBtn = document.getElementById('cancelBulkModalBtn');
+    const bulkForm = document.getElementById('bulkGeneratorForm');
+    const bulkModal = document.getElementById('bulkGeneratorModal');
+    const bulkYearSelect = document.getElementById('bulkYearSelect');
+    const bulkSectionSelect = document.getElementById('bulkSectionSelect');
+    const bulkStartDate = document.getElementById('bulkStartDate');
+
+    if (openBulkBtn) openBulkBtn.addEventListener('click', openBulkGeneratorModal);
+    if (closeBulkBtn) closeBulkBtn.addEventListener('click', closeBulkGeneratorModal);
+    if (cancelBulkBtn) cancelBulkBtn.addEventListener('click', closeBulkGeneratorModal);
+    if (bulkModal) {
+        bulkModal.addEventListener('click', (e) => {
+            if (e.target === bulkModal) closeBulkGeneratorModal();
+        });
+    }
+    if (bulkYearSelect) bulkYearSelect.addEventListener('change', updateBulkSubjectDropdown);
+    if (bulkSectionSelect) bulkSectionSelect.addEventListener('change', updateBulkSubjectDropdown);
+    if (bulkStartDate) {
+        bulkStartDate.addEventListener('change', () => {
+            updateSlotDropdownOptions(bulkStartDate.value || getTodayISOString());
+        });
+    }
+    if (bulkForm) {
+        bulkForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            executeBulkPastGenerator();
+        });
+    }
+}
+
 /* HOD PORTAL & WHATSAPP GENERATOR LOGIC */
 function initHODPortal() {
     const hodStreamSelect = document.getElementById('hodStreamSelect');
@@ -4584,10 +4816,14 @@ function fetchHODAbsentees() {
     const container = document.getElementById('hodSectionCardsContainer');
     const globalShareContainer = document.getElementById('hodGlobalShareContainer');
 
-    const stream = (hodStreamSelect && hodStreamSelect.value) ? hodStreamSelect.value : (currentDept || 'BCA');
+    const stream = currentDept || 'BCA';
     const dateVal = hodDatePicker ? hodDatePicker.value : getTodayISOString();
 
-    const activeLabel = stream;
+    const activeLabel = stream === 'BCOM' ? 'B.Com' : stream;
+
+    if (hodStreamSelect) {
+        lockStreamSelectToDept(hodStreamSelect, stream);
+    }
 
     if (hodFetchBtnText) hodFetchBtnText.textContent = 'Fetching ' + activeLabel + '...';
     if (hodFetchSpinner) hodFetchSpinner.style.display = 'inline-block';
@@ -4700,9 +4936,12 @@ function renderHODSectionCards(data) {
     const globalShareContainer = document.getElementById('hodGlobalShareContainer');
     if (!container) return;
 
-    const entries = data.entries || [];
-    const stream = data.stream || currentDept || 'BCA';
+    const stream = currentDept || data.stream || 'BCA';
     const dateVal = data.date || getTodayISOString();
+    const entries = (data.entries || []).filter(entry => {
+        const entryStream = String(entry.stream || '').toUpperCase();
+        return !entryStream || entryStream === String(stream).toUpperCase();
+    });
 
     if (entries.length === 0) {
         container.innerHTML = `
@@ -5217,10 +5456,6 @@ window.addEventListener('appinstalled', () => {
 });
 
 function getShortageDept() {
-    const deptSelect = document.getElementById('shortageDeptSelect');
-    if (deptSelect && deptSelect.value) return deptSelect.value;
-    const hodStreamSelect = document.getElementById('hodStreamSelect');
-    if (hodStreamSelect && hodStreamSelect.value) return hodStreamSelect.value;
     return currentDept || 'BCA';
 }
 
@@ -5463,12 +5698,7 @@ function initShortageCalculator() {
             subTabDaily.classList.remove('active');
             shortageContainer.style.display = 'block';
             dailyContainer.style.display = 'none';
-            const hodStreamSelect = document.getElementById('hodStreamSelect');
-            if (deptSelect && hodStreamSelect && hodStreamSelect.value) {
-                deptSelect.value = hodStreamSelect.value;
-            } else if (deptSelect && currentDept) {
-                deptSelect.value = currentDept;
-            }
+            lockStreamSelectToDept(deptSelect, currentDept);
             updateShortageSectionDropdown(getShortageDept());
             updateShortageSubjectDropdown();
         });
