@@ -527,7 +527,8 @@ body {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  margin-top: 8px;
+  margin-top: 0;
+  margin-bottom: 10px;
 }
 
 .roll-prefix-bar > label {
