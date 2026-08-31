@@ -1,0 +1,26 @@
+{
+  "id": "https://mgmec.evening.absentee/pwa",
+  "name": "MGM Evening College Absentee",
+  "short_name": "MGMEC Evening",
+  "description": "Absentee logging portal for MGM Evening College faculty",
+  "start_url": "./index.html?app=evening",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0f172a",
+  "theme_color": "#f59e0b",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

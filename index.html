@@ -1,0 +1,789 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>MGM Evening College - Absentee Informer</title>
+  <meta name="description" content="Absentee logger & management portal for MGM Evening College faculty.">
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- PWA & Mobile Icons -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#6366f1">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="MGMEC Evening">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+
+  <!-- Cache Control for GitHub Pages Instant Deployment -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+
+  <link rel="stylesheet" href="styles.css?v=v40.13-mgmec">
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function() {
+        navigator.serviceWorker.register('./sw.js')
+          .then(function(reg) {
+            console.log('[PWA] ServiceWorker registered successfully:', reg.scope);
+          })
+          .catch(function(err) {
+            console.warn('[PWA] ServiceWorker registration failed:', err);
+          });
+      });
+    }
+  </script>
+
+</head>
+<body>
+
+  <!-- Main Mobile Frame Container -->
+  <main class="app-frame" id="appFrame">
+    
+    <!-- Department Login Screen Overlay -->
+    <div class="dept-login-overlay active" id="deptLoginModal">
+      <div class="dept-login-card">
+        <div class="dept-login-header">
+          <div class="brand-logo-circle">MGMEC</div>
+          <h2>Select Department</h2>
+          <p>Choose your stream, enter PIN, then continue</p>
+          <div style="font-size: 0.78rem; color: var(--primary-light, #818cf8); opacity: 0.9; margin-top: 4px;">Designed by <strong>Kingstatue</strong> for <strong>MGM Evening College, Udupi</strong></div>
+        </div>
+        
+        <form id="deptLoginForm" onsubmit="return false;">
+          <div class="dept-grid">
+            <button type="button" class="dept-card" data-dept="BBA">
+              <div class="dept-badge-pill bba">BBA</div>
+              <span class="dept-name">Bachelor of Business Administration</span>
+            </button>
+            <button type="button" class="dept-card" data-dept="BCOM">
+              <div class="dept-badge-pill bcom">B.COM</div>
+              <span class="dept-name">Bachelor of Commerce</span>
+            </button>
+            <button type="button" class="dept-card active dept-card-bca" data-dept="BCA">
+              <div class="dept-badge-pill bca">BCA</div>
+              <span class="dept-name">Bachelor of Computer Applications</span>
+            </button>
+          </div>
+
+          <div class="form-group" style="margin-top: 16px;">
+            <label for="deptPasscode">Stream PIN / Passcode</label>
+            <div class="passcode-input-wrapper">
+              <input type="password" id="deptPasscode" class="form-input" placeholder="Enter your stream PIN" autocomplete="current-password" inputmode="text">
+              <button type="button" class="btn-toggle-pass" id="togglePassBtn">👁️</button>
+            </div>
+          </div>
+
+          <div class="remember-checkbox-group">
+            <label><input type="checkbox" id="rememberDeptCheck" checked> Remember my login on this device</label>
+          </div>
+
+          <div class="login-alert-box" id="loginAlertBox" style="display: none;"></div>
+
+          <button type="submit" class="btn-primary btn-login" id="deptLoginBtn" style="margin-top: 16px;">
+            <span>Enter Absentee Informer</span>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+              <polyline points="12 5 19 12 12 19"></polyline>
+            </svg>
+          </button>
+          <button type="button" class="btn-secondary" id="mobileForceRefreshBtn" style="width: 100%; margin-top: 10px; font-size: 0.8rem; font-weight: 600; padding: 10px;">
+            Phone stuck / frozen? Tap to clear cache &amp; reload
+          </button>
+          <button type="button" class="btn-secondary" id="cancelHODLoginBtn" onclick="cancelHODLoginAndReturnToLogger()" style="width: 100%; margin-top: 8px; font-size: 0.84rem; font-weight: 600; padding: 10px; display: none;">
+            ← Back to Mark Absentees
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <script>
+      // Works even if app.js failed to load (old broken PWA cache)
+      (function () {
+        function mgmForceRefresh() {
+          var done = function () { window.location.reload(); };
+          function isEveningCache(n) { return String(n || '').indexOf('mgmec-absentee-informer') === 0; }
+          function isEveningSW(reg) {
+            var u = '';
+            try { u = ((reg.active || reg.waiting || reg.installing || {}).scriptURL || reg.scope || ''); } catch (e2) { u = (reg && reg.scope) || ''; }
+            return String(u).indexOf('att_College_app') === -1 && String(u).indexOf('/atbo/') === -1;
+          }
+          try {
+            if (window.caches && caches.keys) {
+              caches.keys().then(function (names) {
+                return Promise.all(names.filter(isEveningCache).map(function (n) { return caches.delete(n); }));
+              }).then(function () {
+                if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+                  return navigator.serviceWorker.getRegistrations().then(function (regs) {
+                    regs.forEach(function (r) { if (isEveningSW(r)) r.unregister(); });
+                  });
+                }
+              }).then(done).catch(done);
+              return;
+            }
+          } catch (e) {}
+          done();
+        }
+        window.mgmForceRefresh = mgmForceRefresh;
+        document.addEventListener('DOMContentLoaded', function () {
+          var btn = document.getElementById('mobileForceRefreshBtn');
+          if (btn) btn.addEventListener('click', function (e) {
+            e.preventDefault();
+            btn.textContent = 'Clearing cache…';
+            mgmForceRefresh();
+          });
+        });
+      })();
+    </script>
+
+    <!-- Top Header -->
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-icon" title="MGM Evening College">MGMEC</div>
+        <div class="brand-info">
+          <h1>MGM Evening College</h1>
+          <p id="deptSubtitle">Bachelor of Computer Applications (BCA)</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button class="dept-active-badge bca" id="activeDeptBadge" title="Switch Department (BCA / B.Com / BBA)" type="button">
+          <span id="activeDeptText">BCA</span>
+        </button>
+        <button class="history-pill-btn" id="historyBtn" title="Today's entries — edit or delete" aria-label="Today's entries">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 8v4l3 3"></path>
+            <circle cx="12" cy="12" r="9"></circle>
+          </svg>
+          <span>Today</span>
+          <span class="today-count-badge" id="todayCountBadge" hidden>0</span>
+        </button>
+        <button class="history-pill-btn" id="manageSubjectBtnHeader" title="Add / Manage Subjects" aria-label="Manage Subjects">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+          </svg>
+          <span>Subjects</span>
+        </button>
+        <button class="logout-btn" id="logoutBtn" title="Exit Department / Logout" aria-label="Exit Department">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+            <polyline points="16 17 21 12 16 7"></polyline>
+            <line x1="21" y1="12" x2="9" y2="12"></line>
+          </svg>
+          <span>Exit</span>
+        </button>
+        <button class="icon-btn pwa-install-btn" id="pwaInstallBtn" title="Install App on Phone / Desktop" aria-label="Install App" style="display: none; background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 9999px; padding: 0.35rem 0.75rem; align-items: center; gap: 0.35rem;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+          <span style="font-weight: 600; font-size: 0.8rem;">Install App</span>
+        </button>
+        <button class="icon-btn" id="themeToggle"  title="Toggle Theme" aria-label="Toggle Theme">
+          <svg class="sun-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="5"></circle>
+            <line x1="12" y1="1" x2="12" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="23"></line>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+            <line x1="1" y1="12" x2="3" y2="12"></line>
+            <line x1="21" y1="12" x2="23" y2="12"></line>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Interactive Body -->
+    <div class="app-body">
+      
+      <!-- Dual Input Mode Switcher Tab Bar -->
+      <div class="mode-switcher">
+        <button class="mode-tab active" id="typingModeTab">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="4" width="20" height="16" rx="2"></rect>
+            <path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M8 16h8"></path>
+          </svg>
+          Mark Absentees
+        </button>
+        <button class="mode-tab" id="hodModeTab">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+            <circle cx="9" cy="7" r="4"></circle>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+          </svg>
+          Parent Informer
+        </button>
+      </div>
+
+      <!-- MARK ABSENTEES MODE CONTAINER -->
+      <div class="mode-container" id="typingSection">
+
+        <form class="direct-form" id="directForm" onsubmit="return false;">
+          <div class="form-row mark-step" id="markStepDate">
+            <div class="form-group form-group-full">
+              <label for="directDateInput">Date</label>
+              <input type="date" id="directDateInput" class="form-input" required>
+            </div>
+          </div>
+
+          <div class="form-row mark-step" id="markStepYearSec">
+            <div class="form-group">
+              <label for="directYearSelect">Year</label>
+              <select id="directYearSelect" class="form-select">
+                <option value="" disabled selected>Select Year</option>
+                <option value="First Year">First Year</option>
+                <option value="Second Year">Second Year</option>
+                <option value="Third Year">Third Year</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="directSectionSelect">Section</label>
+              <select id="directSectionSelect" class="form-select">
+                <option value="" disabled selected>Select Section</option>
+                <option value="A">Section A</option>
+                <option value="B">Section B</option>
+                <option value="ALL">Combined (Sec A &amp; B / Electives)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-row mark-step" id="markStepSlotDur">
+            <div class="form-group">
+              <label for="directSlotSelect">Slot / Time</label>
+              <select id="directSlotSelect" class="form-select">
+                <option value="" disabled selected>Select Slot</option>
+                <option value="1">Slot 1 (1:30 - 2:15 PM / 1:00 - 1:45 PM)</option>
+                <option value="2">Slot 2 (2:15 - 3:00 PM / 1:45 - 2:30 PM)</option>
+                <option value="3">Slot 3 (3:00 - 3:45 PM / 2:30 - 3:15 PM)</option>
+                <option value="4">Slot 4 (3:45 - 4:30 PM / 3:15 - 4:00 PM)</option>
+                <option value="5">Slot 5 (4:45 - 5:30 PM / 4:15 - 5:00 PM)</option>
+                <option value="6">Slot 6 (5:30 - 6:15 PM / 5:00 - 5:45 PM)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="directDurationSelect">Duration / Multi-Slot</label>
+              <select id="directDurationSelect" class="form-select">
+                <option value="1">1 Hour (Single Slot)</option>
+                <option value="2">2 Hours (2 Slots - Double Class / Lab)</option>
+                <option value="3">3 Hours (3 Slots - Multi Class / Lab)</option>
+                <option value="4">4 Hours (4 Slots - Multi Class / Lab)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-row mark-step" id="markStepSubject">
+            <div class="form-group form-group-full">
+              <label for="directSubjectInput">Subject</label>
+              <select id="directSubjectInput" class="form-select" required>
+                <option value="" disabled selected>Select Subject</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="mark-step" id="markStepRolls">
+            <div class="form-group form-group-full">
+              <label for="directRollInput">Absent Roll Numbers</label>
+              <textarea id="directRollInput" class="form-input mark-roll-input" rows="3" placeholder="e.g. 09, 17 or full 26709, 26717 (blank = NIL)"></textarea>
+              <div class="roll-prefix-bar" id="directRollPrefixBar">
+                <label for="directRollPrefix">Section prefix</label>
+                <input type="text" id="directRollPrefix" class="form-input roll-prefix-input" maxlength="10" placeholder="e.g. 267 or S0" autocomplete="off" spellcheck="false">
+                <span class="roll-prefix-hint">Short digits (2–3) expand using this prefix</span>
+              </div>
+              <div class="roll-expand-preview" id="directRollExpandPreview" hidden></div>
+            </div>
+          </div>
+
+          <div id="directMultiSlotContainer" style="display: none; margin-bottom: 12px; padding: 10px; background: rgba(0,0,0,0.25); border: 1px dashed var(--primary-light); border-radius: 8px;">
+            <div style="font-size: 0.78rem; font-weight: 700; color: #60a5fa; margin-bottom: 6px;">
+              🧪 Per-Slot Absentees Adjustment (Optional for Multi-Hour Labs)
+            </div>
+            <div id="directMultiSlotBreakdown" style="display: flex; flex-direction: column; gap: 6px;"></div>
+          </div>
+
+          <div class="mark-step" id="markStepActions">
+            <div class="modal-buttons" style="margin-top: 10px;">
+              <button type="button" class="btn-secondary btn-cancel" id="directResetBtn">Clear / Reset</button>
+              <button type="button" class="btn-primary btn-submit" id="directSubmitBtn">
+                <span id="directSubmitBtnText">Submit Absentee</span>
+                <div class="spinner" id="directSubmitSpinner" style="display: none;"></div>
+              </button>
+            </div>
+          </div>
+
+          <button type="button" class="btn-secondary history-open-btn" id="historyBtnTyping" style="margin-top: 8px; width: 100%;">
+            Today’s entries — Edit / Delete
+          </button>
+        </form>
+
+      </div>
+
+      <!-- HOD PORTAL CONTAINER -->
+      <div class="mode-container" id="hodSection" style="display: none;">
+        <div class="hod-header-card">
+          <div class="hod-title-group" style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 10px;">
+            <div>
+              <h2 style="font-size: 1.25rem; font-weight: 800; color: var(--text-main); margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">
+                📢 Parent Informer
+              </h2>
+              <p style="font-size: 0.82rem; color: var(--text-muted);">
+                Select date to fetch section-wise absentees and generate parent WhatsApp messages.
+              </p>
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+              <button type="button" class="btn-secondary" onclick="switchMode('typing')" style="padding: 6px 12px; font-size: 0.78rem; font-weight: 600;">
+                ← Back to Mark Absentees
+              </button>
+              <button type="button" class="btn-secondary" id="hodPasscodeSettingsBtn" style="padding: 6px 12px; font-size: 0.78rem; display: none;">
+                ⚙️ Change Passcodes
+              </button>
+            </div>
+          </div>
+
+          <div class="mode-switcher" style="margin-top: 14px; margin-bottom: 4px; background: rgba(0,0,0,0.25); padding: 4px; border-radius: 10px;">
+            <button class="mode-tab active" id="subTabDailyInformer" type="button" style="padding: 8px 12px; font-size: 0.82rem; font-weight: 700;">
+              📱 Daily Absentees Report
+            </button>
+            <button class="mode-tab" id="subTabShortageCalculator" type="button" style="padding: 8px 12px; font-size: 0.82rem; font-weight: 700;">
+              ⚠️ Attendance Shortage Report (&lt; 75%)
+            </button>
+          </div>
+        </div>
+
+        <!-- CONTAINER 1: DAILY INFORMER -->
+        <div id="hodDailyInformerContainer">
+          <div class="hod-header-card" style="margin-top: 0;">
+            <div class="hod-filter-row" style="margin-top: 0;">
+              <div class="form-group" style="flex: 1; min-width: 140px;">
+                <label for="hodStreamSelect">Department</label>
+                <select id="hodStreamSelect" class="form-select">
+                  <option value="BCA" selected>BCA (Computer Applications)</option>
+                  <option value="BCOM">B.Com (Bachelor of Commerce)</option>
+                  <option value="BBA">BBA (Business Administration)</option>
+                </select>
+              </div>
+              
+              <div class="form-group" style="flex: 1; min-width: 140px;">
+                <label for="hodDatePicker">Date</label>
+                <input type="date" id="hodDatePicker" class="form-control" />
+              </div>
+
+              <div class="form-group" style="align-self: flex-end;">
+                <button type="button" class="btn-primary" id="hodFetchBtn" style="padding: 10px 16px; width: 100%;">
+                  <span id="hodFetchBtnText">🔄 Fetch Absentees</span>
+                  <div class="spinner" id="hodFetchSpinner" style="display: none;"></div>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div id="hodStatusMessage" class="alert-banner" style="display: none; margin-top: 14px;"></div>
+
+          <div id="hodGlobalShareContainer" style="display: none; margin-bottom: 16px;">
+            <button type="button" class="btn-whatsapp-global" id="hodShareAllWaBtn" style="width: 100%;">
+              📱 Share Full Department Summary (All Sections) to WhatsApp
+            </button>
+          </div>
+
+          <div class="hod-section-cards" id="hodSectionCardsContainer">
+            <div class="hod-empty-state">
+              <div style="font-size: 2.5rem; margin-bottom: 8px;">📊</div>
+              <p style="font-size: 0.88rem; color: var(--text-muted); font-weight: 500;">Select date and click <strong>"Fetch Absentees"</strong> to generate section report.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- CONTAINER 2: SHORTAGE CALCULATOR -->
+        <div id="hodShortageContainer" style="display: none;">
+          <div class="hod-header-card" style="border: 1px solid rgba(239, 68, 68, 0.35); background: rgba(239, 68, 68, 0.05);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+              <h3 style="font-size: 1.05rem; font-weight: 800; color: #f87171; display: flex; align-items: center; gap: 8px; margin: 0;">
+                ⚠️ Attendance Shortage Report Generator
+              </h3>
+              <span class="badge" style="background: rgba(239, 68, 68, 0.2); color: #f87171; font-size: 0.72rem; font-weight: 700;">Roll Range Method</span>
+            </div>
+
+            <div class="hod-filter-row" style="margin-bottom: 8px; margin-top: 0;">
+              <div class="form-group" style="flex: 1; min-width: 110px;">
+                <label for="shortageDeptSelect">Department</label>
+                <select id="shortageDeptSelect" class="form-select">
+                  <option value="BCA" selected>BCA</option>
+                  <option value="BCOM">B.Com</option>
+                  <option value="BBA">BBA</option>
+                </select>
+              </div>
+              <div class="form-group" style="flex: 1; min-width: 110px;">
+                <label for="shortageYearSelect">Year</label>
+                <select id="shortageYearSelect" class="form-select">
+                  <option value="First Year">First Year</option>
+                  <option value="Second Year">Second Year</option>
+                  <option value="Third Year">Third Year</option>
+                </select>
+              </div>
+              <div class="form-group" style="flex: 1; min-width: 110px;">
+                <label for="shortageSectionSelect">Section</label>
+                <select id="shortageSectionSelect" class="form-select">
+                  <option value="A">Section A</option>
+                  <option value="B">Section B</option>
+                  <option value="ALL">Combined (Electives)</option>
+                </select>
+              </div>
+              <div class="form-group" style="flex: 1; min-width: 140px;">
+                <label for="shortageSubjectSelect">Subject Filter</label>
+                <select id="shortageSubjectSelect" class="form-select">
+                  <option value="ALL" selected>All Subjects (Overall)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="hod-filter-row" style="margin-bottom: 8px;">
+              <div class="form-group" style="flex: 1; min-width: 110px;">
+                <label for="shortageStartRoll">Start Roll No. / Ranges</label>
+                <input type="text" id="shortageStartRoll" class="form-input" placeholder="e.g. 26701 or 26701-26760, 26810" />
+              </div>
+              <div class="form-group" style="flex: 1; min-width: 110px;">
+                <label for="shortageEndRoll">End Roll No. (Optional)</label>
+                <input type="text" id="shortageEndRoll" class="form-input" placeholder="e.g. 26760" />
+              </div>
+              <div class="form-group" style="flex: 1; min-width: 130px;">
+                <label for="shortageCutoffSelect">Cutoff Threshold</label>
+                <select id="shortageCutoffSelect" class="form-select">
+                  <option value="75" selected>Below 75% (Shortage)</option>
+                  <option value="80">Below 80%</option>
+                  <option value="60">Below 60% (Critical)</option>
+                  <option value="100">All Students (Complete List)</option>
+                </select>
+              </div>
+              <div class="form-group" style="flex: 1; min-width: 130px;">
+                <label for="shortagePeriodSelect">Time Period</label>
+                <select id="shortagePeriodSelect" class="form-select">
+                  <option value="ALL" selected>All Time (Cumulative)</option>
+                  <option value="MONTH">This Month (Monthly)</option>
+                  <option value="WEEK">This Week (Weekly)</option>
+                  <option value="CUSTOM">Custom Date Range</option>
+                </select>
+              </div>
+            </div>
+
+            <div id="shortageCustomDateRow" class="hod-filter-row" style="display: none; margin-bottom: 8px;">
+              <div class="form-group" style="flex: 1; min-width: 130px;">
+                <label for="shortageFromDate">From Date</label>
+                <input type="date" id="shortageFromDate" class="form-input" />
+              </div>
+              <div class="form-group" style="flex: 1; min-width: 130px;">
+                <label for="shortageToDate">To Date</label>
+                <input type="date" id="shortageToDate" class="form-input" />
+              </div>
+            </div>
+
+            <button type="button" class="btn-primary" id="shortageCalculateBtn" style="width: 100%; background: linear-gradient(135deg, #ef4444, #dc2626); border: none; margin-top: 6px; padding: 10px 16px; font-weight: 700;">
+              <span id="shortageCalculateBtnText">📊 Calculate Shortage Report</span>
+              <div class="spinner" id="shortageSpinner" style="display: none;"></div>
+            </button>
+          </div>
+
+          <div id="shortageResultsContainer" style="display: none; margin-top: 14px;"></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Confirmation Modal Form -->
+    <div class="modal-overlay" id="confirmationModal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h2>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--primary-color)" stroke-width="2.5">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+            </svg>
+            Confirm Attendance Entry
+          </h2>
+          <button class="icon-btn" id="closeModalBtn" aria-label="Close modal">&times;</button>
+        </div>
+
+        <form id="attendanceForm" onsubmit="return false;">
+          <div id="modalAlertBox" style="display: none;"></div>
+          <div class="form-row">
+            <div class="form-group form-group-full">
+              <label for="dateInput">Date</label>
+              <input type="date" id="dateInput" class="form-input" required>
+            </div>
+          </div>
+
+          <div class="form-group form-group-full" style="margin-bottom: 12px; width: 100%;">
+            <label for="rollNumbersInput">Absent Roll Numbers</label>
+            <textarea id="rollNumbersInput" class="form-input mark-roll-input" rows="3" placeholder="e.g. 09, 17 or full 26709 (blank = NIL)"></textarea>
+            <div class="roll-prefix-bar" id="modalRollPrefixBar">
+              <label for="modalRollPrefix">Section prefix</label>
+              <input type="text" id="modalRollPrefix" class="form-input roll-prefix-input" maxlength="10" placeholder="e.g. 267 or S0" autocomplete="off" spellcheck="false">
+              <span class="roll-prefix-hint">Short digits (2–3) expand using this prefix</span>
+            </div>
+            <div class="roll-expand-preview" id="modalRollExpandPreview" hidden></div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="yearSelect">Year</label>
+              <select id="yearSelect" class="form-select" required>
+                <option value="" disabled selected>Select Year</option>
+                <option value="First Year">First Year</option>
+                <option value="Second Year">Second Year</option>
+                <option value="Third Year">Third Year</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="sectionSelect">Section</label>
+              <select id="sectionSelect" class="form-select" required>
+                <option value="" disabled selected>Select Section</option>
+                <option value="A">Section A</option>
+                <option value="B">Section B</option>
+                <option value="ALL">Combined (Sec A & B / Electives)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="subjectInput">Subject</label>
+              <select id="subjectInput" class="form-select" required>
+                <option value="" disabled selected>Select Subject</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="slotSelect">Slot / Time Period</label>
+              <select id="slotSelect" class="form-select" required>
+                <option value="" disabled selected>Select Slot</option>
+                <option value="1">Slot 1 (1:30 - 2:15 PM / 1:00 - 1:45 PM)</option>
+                <option value="2">Slot 2 (2:15 - 3:00 PM / 1:45 - 2:30 PM)</option>
+                <option value="3">Slot 3 (3:00 - 3:45 PM / 2:30 - 3:15 PM)</option>
+                <option value="4">Slot 4 (3:45 - 4:30 PM / 3:15 - 4:00 PM)</option>
+                <option value="5">Slot 5 (4:45 - 5:30 PM / 4:15 - 5:00 PM)</option>
+                <option value="6">Slot 6 (5:30 - 6:15 PM / 5:00 - 5:45 PM)</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="durationSelect">Duration / Multi-Slot</label>
+              <select id="durationSelect" class="form-select">
+                <option value="1">1 Hour (Single Slot)</option>
+                <option value="2">2 Hours (2 Slots - Double Class / Lab)</option>
+                <option value="3">3 Hours (3 Slots - Multi Class / Lab)</option>
+                <option value="4">4 Hours (4 Slots - Multi Class / Lab)</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="modalMultiSlotContainer" style="display: none; margin-bottom: 12px; padding: 10px; background: rgba(0,0,0,0.25); border: 1px dashed var(--primary-light); border-radius: 8px;">
+            <div style="font-size: 0.78rem; font-weight: 700; color: #60a5fa; margin-bottom: 6px;">
+              🧪 Per-Slot Absentees Adjustment (Optional for Multi-Hour Labs)
+            </div>
+            <div id="modalMultiSlotBreakdown" style="display: flex; flex-direction: column; gap: 6px;"></div>
+          </div>
+
+          <div class="modal-buttons">
+            <button type="button" class="btn-secondary btn-cancel" id="cancelBtn">Cancel</button>
+            <button type="button" class="btn-danger" id="deleteBtn" style="display: none;" title="Deletes Raw Data row and clears this slot on the section sheet">🗑️ Delete from Sheets</button>
+            <button type="button" class="btn-primary btn-submit" id="submitBtn">
+              <span id="submitBtnText">Submit Absentee</span>
+              <div class="spinner" id="submitSpinner" style="display: none;"></div>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Success Toast -->
+    <div class="toast-overlay" id="successToast">
+      <div class="checkmark-circle">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="20 6 9 17 4 12"></polyline>
+        </svg>
+      </div>
+      <div class="toast-text">Attendance Recorded!</div>
+      <div class="toast-subtext" id="toastSubtext">Sent to MGM Attendance Register</div>
+    </div>
+
+    <!-- Today's entries / All History drawer -->
+    <div class="history-drawer" id="historyDrawer">
+      <div class="drawer-header">
+        <div>
+          <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <h2 id="historyDrawerTitle" style="margin: 0;">Today’s entries</h2>
+            <div style="display: flex; background: rgba(0,0,0,0.3); padding: 2px; border-radius: 6px; border: 1px solid var(--border-color, rgba(255,255,255,0.1));">
+              <button type="button" id="historyTabToday" style="padding: 3px 8px; font-size: 0.72rem; font-weight: 700; border: none; border-radius: 4px; background: var(--primary-color, #6366f1); color: #fff; cursor: pointer;">Today</button>
+              <button type="button" id="historyTabAll" style="padding: 3px 8px; font-size: 0.72rem; font-weight: 700; border: none; border-radius: 4px; background: transparent; color: var(--text-muted, #94a3b8); cursor: pointer;">All History</button>
+            </div>
+          </div>
+          <p class="drawer-subtitle" id="todayDrawerSubtitle">Correct any class you marked today</p>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <button type="button" class="btn-primary" id="syncOfflineBtn" style="display: none; padding: 6px 12px; font-size: 0.78rem;">⚡ Sync Pending (<span id="pendingSyncCount">0</span>)</button>
+          <button class="icon-btn" id="closeHistoryBtn" aria-label="Close">&times;</button>
+        </div>
+      </div>
+      <div id="allHistoryFilterRow" style="display: none; padding: 10px 16px; background: rgba(0,0,0,0.2); border-bottom: 1px solid var(--border-color, rgba(255,255,255,0.08)); gap: 8px; align-items: center; flex-wrap: wrap;">
+        <select id="allHistoryYearFilter" class="form-select" style="flex: 1; padding: 5px 8px; font-size: 0.78rem;">
+          <option value="ALL">All Years</option>
+          <option value="First Year">First Year</option>
+          <option value="Second Year">Second Year</option>
+          <option value="Third Year">Third Year</option>
+        </select>
+        <input type="date" id="allHistoryDateFilter" class="form-input" style="flex: 1; padding: 4px 8px; font-size: 0.78rem;" title="Filter by date" />
+        <button type="button" id="clearAllHistoryFilterBtn" class="btn-secondary" style="padding: 4px 8px; font-size: 0.75rem;">Clear</button>
+      </div>
+      <div class="drawer-body" id="historyList">
+        <p class="transcript-placeholder" style="text-align: center; margin-top: 20px;">No entries today — submit above.</p>
+      </div>
+    </div>
+
+    <!-- Subject Management Modal -->
+    <div class="modal-overlay" id="subjectManageModal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h2>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--primary-color)" stroke-width="2.5">
+              <path d="M12 5v14M5 12h14"></path>
+            </svg>
+            Manage Subjects (<span id="subjectModalDeptText">BCA</span>)
+          </h2>
+          <button class="icon-btn" id="closeSubjectModalBtn" aria-label="Close modal">&times;</button>
+        </div>
+
+        <div class="form-group" style="margin-top: 10px;">
+          <label for="newSubjectInput">Add / Rename Subject (<span id="subjectModalYearText">First Year</span>)</label>
+          <input type="hidden" id="editingSubjectOldName" value="">
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="newSubjectInput" class="form-input" placeholder="Type subject name (e.g. AI Lab, Tax Procedure)">
+            <button type="button" class="btn-primary" id="addSubjectBtn" style="white-space: nowrap; padding: 0 16px;">+ Add</button>
+          </div>
+          <div style="margin-top: 12px;">
+            <label for="newSubjectSectionSelect" style="font-size: 0.85rem; font-weight: 700; color: var(--text-main); display: block; margin-bottom: 6px;">Subject scope (who sees it)</label>
+            <input type="hidden" id="editingSubjectOldSection" value="">
+            <select id="newSubjectSectionSelect" class="form-select" style="width: 100%; padding: 10px 12px; font-size: 0.9rem; border-radius: var(--radius-md, 8px);">
+              <option value="COMMON">Common (all classes / sections)</option>
+              <option value="ALL">Combined (Kannada / Hindi / Sanskrit / Elective)</option>
+            </select>
+            <p style="margin-top: 8px; font-size: 0.75rem; color: var(--text-muted); line-height: 1.45;">
+              <strong>Common</strong> — Main class subject for all sections &nbsp;·&nbsp;
+              <strong>Combined</strong> — Elective / Language subject for Combined classes (Kannada, Hindi, Sanskrit, etc.)
+            </p>
+          </div>
+          <label id="newSubjectElectiveWrap" style="display: none; align-items: center; gap: 8px; margin-top: 12px; font-size: 0.88rem; cursor: pointer;">
+            <input type="checkbox" id="newSubjectElectiveCheck" style="width: 16px; height: 16px;">
+            <span>Elective / Language</span>
+          </label>
+          <p id="subjectEditHint" style="display: none; margin-top: 8px; font-size: 0.78rem; color: var(--text-muted);"></p>
+        </div>
+
+        <div class="form-group" style="margin-top: 14px;">
+          <label>Currently Loaded Subjects</label>
+          <div class="subject-chips-container" id="subjectChipsContainer" style="display: flex; flex-wrap: wrap; gap: 6px; max-height: 160px; overflow-y: auto; padding: 8px; background: var(--bg-card); border-radius: var(--radius-md); border: 1px solid var(--bg-card-border);">
+            <!-- Dynamic Subject Chips -->
+          </div>
+        </div>
+
+        <div class="modal-buttons" style="margin-top: 14px;">
+          <button type="button" class="btn-secondary" id="resetSubjectsBtn" style="border: 1px solid rgba(239, 68, 68, 0.4); color: #f87171;">🧹 Clear All Stored Subjects</button>
+          <button type="button" class="btn-primary" id="doneSubjectModalBtn">Done</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Passcode Settings Modal -->
+    <div class="modal-overlay" id="passcodeSettingsModal">
+      <div class="modal-card" style="max-width: 440px;">
+        <div class="modal-header">
+          <h2>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--primary-color)" stroke-width="2.5">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+            <span id="passcodeModalTitle">Manage Passcodes</span>
+          </h2>
+          <button class="icon-btn" id="closePasscodeModalBtn" aria-label="Close modal">&times;</button>
+        </div>
+        <form id="passcodeSettingsForm">
+          <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 12px;" id="passcodeModalSubtitle">
+            Customize Teacher passcodes and HOD portal passcodes.
+          </p>
+
+          <!-- BCA Passcodes -->
+          <div id="group_BCA">
+            <div class="form-group" style="margin-bottom: 8px;">
+              <label for="passTeacher_BCA">BCA Teacher Passcode</label>
+              <input type="text" id="passTeacher_BCA" class="form-input" required />
+            </div>
+            <div class="form-group" style="margin-bottom: 12px;">
+              <label for="passHOD_BCA" style="color: var(--primary-color); font-weight: 700;">🔒 BCA HOD Portal Passcode</label>
+              <input type="text" id="passHOD_BCA" class="form-input" required />
+            </div>
+          </div>
+
+          <!-- BCOM Passcodes -->
+          <div id="group_BCOM" style="margin-top: 10px;">
+            <div class="form-group" style="margin-bottom: 8px;">
+              <label for="passTeacher_BCOM">B.Com Teacher Passcode</label>
+              <input type="text" id="passTeacher_BCOM" class="form-input" required />
+            </div>
+            <div class="form-group" style="margin-bottom: 12px;">
+              <label for="passHOD_BCOM" style="color: var(--primary-color); font-weight: 700;">🔒 B.Com HOD Portal Passcode</label>
+              <input type="text" id="passHOD_BCOM" class="form-input" required />
+            </div>
+          </div>
+
+          <!-- BBA Passcodes -->
+          <div id="group_BBA" style="margin-top: 10px;">
+            <div class="form-group" style="margin-bottom: 8px;">
+              <label for="passTeacher_BBA">BBA Teacher Passcode</label>
+              <input type="text" id="passTeacher_BBA" class="form-input" required />
+            </div>
+            <div class="form-group" style="margin-bottom: 12px;">
+              <label for="passHOD_BBA" style="color: var(--primary-color); font-weight: 700;">🔒 BBA HOD Portal Passcode</label>
+              <input type="text" id="passHOD_BBA" class="form-input" required />
+            </div>
+          </div>
+
+          <!-- Master Admin -->
+          <div class="form-group" style="margin-bottom: 14px;" id="groupADMIN">
+            <label for="passADMIN" style="color: #fbbf24; font-weight: 700;">👑 Super Admin Master Passcode</label>
+            <input type="text" id="passADMIN" class="form-input" required />
+          </div>
+
+          <div class="modal-buttons" style="margin-top: 10px;">
+            <button type="button" class="btn-secondary" id="resetPasscodesBtn">Reset Defaults</button>
+            <button type="submit" class="btn-primary">Save Passcodes</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <footer class="app-footer" style="text-align: center; padding: 18px 20px; margin-top: 30px; font-size: 0.85rem; color: var(--text-muted); border-top: 1px solid var(--border-color, rgba(255,255,255,0.08)); border-radius: 8px;">
+      <div>Designed by <strong style="color: var(--primary-light, #818cf8);">Kingstatue</strong> for <strong>MGM Evening College, Udupi</strong></div>
+      <div style="margin-top: 8px;">
+        <button type="button" onclick="forceAppUpdate()" class="btn-secondary" style="padding: 5px 14px; font-size: 0.78rem; display: inline-flex; align-items: center; gap: 6px; border-radius: 6px; cursor: pointer;">
+          🔄 Check for App Updates (Preserves History & Data)
+        </button>
+      </div>
+    </footer>
+  </main>
+
+  <datalist id="subjectDatalist"></datalist>
+
+  <script src="parser.js?v=v40.13-mgmec"></script>
+  <script src="app.js?v=v40.13-mgmec"></script>
+</body>
+</html>
