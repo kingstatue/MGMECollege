@@ -647,7 +647,14 @@ function prepareRollPrefixForEdit(item) {
     try {
         if (rollNumbersInput) {
             setTimeout(() => {
-                try { rollNumbersInput.focus(); } catch (e2) {}
+                try { rollNumbersInput.focus({ preventScroll: true }); } catch (e2) {
+                    try { rollNumbersInput.focus(); } catch (e3) {}
+                }
+                try {
+                    window.scrollTo(0, 0);
+                    document.documentElement.scrollTop = 0;
+                    document.body.scrollTop = 0;
+                } catch (e4) {}
             }, 80);
         }
     } catch (e) {}
@@ -1180,6 +1187,7 @@ function openConfirmationModal(data) {
 
     updateModalDoubleEntryCheck();
     if (confirmationModal) confirmationModal.classList.add('active');
+    try { lockAppScroll(true); } catch (e) {}
 }
 
 function closeConfirmationModal() {
@@ -1188,6 +1196,55 @@ function closeConfirmationModal() {
     if (modalAlertBox) modalAlertBox.style.display = 'none';
     if (statusPill) statusPill.className = 'status-pill';
     if (statusText) statusText.textContent = 'Tap microphone to speak';
+    try { lockAppScroll(false); } catch (e) {}
+    try { restoreAppViewport(); } catch (e) {}
+}
+
+/** Keep header / mode tabs visible after edit/modals (prevents page shift). */
+function restoreAppViewport() {
+    try {
+        window.scrollTo(0, 0);
+        if (document.documentElement) document.documentElement.scrollTop = 0;
+        if (document.body) document.body.scrollTop = 0;
+        const frame = document.getElementById('appFrame') || document.querySelector('.app-frame');
+        if (frame) frame.scrollTop = 0;
+        const appBody = document.querySelector('.app-body');
+        if (appBody) appBody.scrollTop = 0;
+        const active = document.activeElement;
+        if (active && active !== document.body && typeof active.blur === 'function') {
+            const keepFocus = active.closest && active.closest('.modal-overlay.active, .history-drawer.active, .dept-login-overlay.active');
+            if (!keepFocus) active.blur();
+        }
+    } catch (e) {}
+}
+
+function lockAppScroll(locked) {
+    try {
+        const anyOverlay = document.querySelector(
+            '.modal-overlay.active, .history-drawer.active, .toast-overlay.active, .dept-login-overlay.active, #slotConflictModalDialog, #deleteConfirmModalDialog, #alertModalDialog, #missingComboModalDialog'
+        );
+        if (locked || anyOverlay) {
+            document.documentElement.style.overflow = 'hidden';
+            document.body.style.overflow = 'hidden';
+        } else {
+            document.documentElement.style.overflow = '';
+            document.body.style.overflow = '';
+            restoreAppViewport();
+        }
+    } catch (e) {}
+}
+
+function setHistoryDrawerOpen(isOpen) {
+    const drawer = document.getElementById('historyDrawer') || historyDrawer;
+    if (drawer) {
+        if (isOpen) drawer.classList.add('active');
+        else drawer.classList.remove('active');
+    }
+    try {
+        document.body.classList.toggle('history-drawer-open', !!isOpen);
+        lockAppScroll(!!isOpen);
+        if (!isOpen) restoreAppViewport();
+    } catch (e) {}
 }
 
 function showSlotConflictDialog(params) {
@@ -1257,14 +1314,16 @@ function showSlotConflictDialog(params) {
 
         const card = dialog.querySelector('.modal-card');
         if (card && card.scrollIntoView) {
-            card.scrollIntoView({ block: 'center', behavior: 'instant' });
+            card.scrollIntoView({ block: 'nearest', behavior: 'instant' });
         }
+        try { window.scrollTo(0, 0); } catch (e) {}
 
         const cleanup = (choice) => {
-            document.body.style.overflow = '';
+            try { lockAppScroll(false); } catch (e) {}
             if (dialog && dialog.parentNode) {
                 dialog.parentNode.removeChild(dialog);
             }
+            try { restoreAppViewport(); } catch (e) {}
             resolve(choice);
         };
 
@@ -1626,6 +1685,7 @@ function showSuccessToast(payload) {
 
     setTimeout(() => {
         successToast.classList.remove('active');
+        try { restoreAppViewport(); } catch (e) {}
     }, 2800);
 }
 
@@ -2464,8 +2524,10 @@ function editHistoryEntry(index, sourceList) {
     }
 
     updateModalDoubleEntryCheck();
-    historyDrawer.classList.remove('active');
+    setHistoryDrawerOpen(false);
+    try { restoreAppViewport(); } catch (e) {}
     confirmationModal.classList.add('active');
+    try { lockAppScroll(true); } catch (e) {}
     try { prepareRollPrefixForEdit(item); } catch (e) {}
 }
 
@@ -3940,6 +4002,24 @@ document.addEventListener('DOMContentLoaded', () => {
     currentDateTrack = todayStr;
     if (dateInput) dateInput.value = todayStr;
     if (directDateInput) directDateInput.value = todayStr;
+    try { restoreAppViewport(); } catch (e) {}
+    try {
+        window.addEventListener('orientationchange', () => setTimeout(restoreAppViewport, 120));
+        window.addEventListener('resize', () => {
+            if (!document.querySelector('.modal-overlay.active, .history-drawer.active')) {
+                restoreAppViewport();
+            }
+        });
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', () => {
+                try {
+                    window.scrollTo(0, 0);
+                    document.documentElement.scrollTop = 0;
+                    document.body.scrollTop = 0;
+                } catch (e2) {}
+            });
+        }
+    } catch (e) {}
     if (todayBadge) {
         const options = { month: 'short', day: 'numeric', year: 'numeric' };
         todayBadge.textContent = 'Today - ' + new Date().toLocaleDateString(undefined, options);
@@ -4163,7 +4243,7 @@ document.addEventListener('DOMContentLoaded', () => {
         currentHistoryTabMode = 'TODAY';
         updateHistoryTabStyles();
         renderHistoryList();
-        historyDrawer.classList.add('active');
+        setHistoryDrawerOpen(true);
         fetchTodayServerHistory();
         syncOfflineEntries();
     };
@@ -4173,7 +4253,7 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.addEventListener('click', openHistory);
     });
 
-    if (closeHistoryBtn) closeHistoryBtn.addEventListener('click', () => historyDrawer.classList.remove('active'));
+    if (closeHistoryBtn) closeHistoryBtn.addEventListener('click', () => setHistoryDrawerOpen(false));
 
     initHistoryDrawerTabs();
 
