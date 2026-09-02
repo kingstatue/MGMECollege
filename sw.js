@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'mgmec-absentee-informer';
-const CACHE_NAME = 'mgmec-absentee-informer-v118-keyboard-fix';
+const CACHE_NAME = 'mgmec-absentee-informer-v119-isolate';
 
 function isOwnCache(name) {
   return String(name || '').indexOf(CACHE_PREFIX) === 0;
@@ -7,7 +7,10 @@ function isOwnCache(name) {
 
 function isOtherCollegeAppPath(pathname) {
   const p = String(pathname || '');
-  return p.indexOf('/att_College_app/') !== -1 || p.indexOf('/atbo/') !== -1;
+  return p.indexOf('/att_College_app/') !== -1
+    || p.indexOf('/atbo/') !== -1
+    || p.indexOf('/att_appAllstreams/') !== -1
+    || p.indexOf('/aaaacrypt/') !== -1;
 }
 
 // Install Event - Instant non-blocking activation (0ms SW installation)

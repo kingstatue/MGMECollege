@@ -4328,27 +4328,17 @@ document.addEventListener('DOMContentLoaded', () => {
 function forceAppUpdate() {
     showCustomToast('🔄 Checking for App Updates...', 'All attendance history & offline logs remain 100% safe.');
     function isEveningCache(n) { return String(n || '').indexOf('mgmec-absentee-informer') === 0; }
-    function isEveningSW(reg) {
-        let u = '';
-        try { u = ((reg.active || reg.waiting || reg.installing || {}).scriptURL || reg.scope || ''); } catch (e) { u = (reg && reg.scope) || ''; }
-        return String(u).indexOf('att_College_app') === -1 && String(u).indexOf('/atbo/') === -1;
-    }
-    if ('caches' in window) {
-        caches.keys().then(names => {
-            return Promise.all(names.filter(isEveningCache).map(name => caches.delete(name)));
-        }).then(() => {
-            if (navigator.serviceWorker) {
-                navigator.serviceWorker.getRegistrations().then(regs => {
-                    regs.forEach(reg => { if (isEveningSW(reg)) reg.unregister(); });
-                    setTimeout(() => window.location.reload(true), 500);
-                });
-            } else {
-                setTimeout(() => window.location.reload(true), 500);
-            }
-        });
-    } else {
-        setTimeout(() => window.location.reload(true), 500);
-    }
+    const reloadSoon = () => setTimeout(() => window.location.reload(true), 500);
+    const clearOwn = () => {
+        if (!('caches' in window)) return Promise.resolve();
+        return caches.keys().then(names => Promise.all(names.filter(isEveningCache).map(name => caches.delete(name))));
+    };
+    const unregisterOwn = () => {
+        if (!navigator.serviceWorker || !navigator.serviceWorker.getRegistration) return Promise.resolve();
+        // Only this page's SW scope — never unregister Day College / Allstreams
+        return navigator.serviceWorker.getRegistration().then(reg => (reg ? reg.unregister() : undefined));
+    };
+    clearOwn().then(unregisterOwn).then(reloadSoon).catch(reloadSoon);
 }
 
 function populateModalSectionOptions() {

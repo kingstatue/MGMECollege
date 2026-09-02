@@ -24,7 +24,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
 
-  <link rel="stylesheet" href="styles.css?v=v40.18-mgmec">
+  <link rel="stylesheet" href="styles.css?v=v40.19-isolate">
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', function() {
@@ -108,19 +108,15 @@
         function mgmForceRefresh() {
           var done = function () { window.location.reload(); };
           function isEveningCache(n) { return String(n || '').indexOf('mgmec-absentee-informer') === 0; }
-          function isEveningSW(reg) {
-            var u = '';
-            try { u = ((reg.active || reg.waiting || reg.installing || {}).scriptURL || reg.scope || ''); } catch (e2) { u = (reg && reg.scope) || ''; }
-            return String(u).indexOf('att_College_app') === -1 && String(u).indexOf('/atbo/') === -1;
-          }
           try {
             if (window.caches && caches.keys) {
               caches.keys().then(function (names) {
                 return Promise.all(names.filter(isEveningCache).map(function (n) { return caches.delete(n); }));
               }).then(function () {
-                if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
-                  return navigator.serviceWorker.getRegistrations().then(function (regs) {
-                    regs.forEach(function (r) { if (isEveningSW(r)) r.unregister(); });
+                if (navigator.serviceWorker && navigator.serviceWorker.getRegistration) {
+                  // Only this page's SW — never unregister Day College / Allstreams
+                  return navigator.serviceWorker.getRegistration().then(function (reg) {
+                    if (reg) return reg.unregister();
                   });
                 }
               }).then(done).catch(done);
@@ -871,6 +867,6 @@
   <datalist id="subjectDatalist"></datalist>
 
   <script src="parser.js?v=v40.18-mgmec"></script>
-  <script src="app.js?v=v40.18-mgmec"></script>
+  <script src="app.js?v=v40.19-isolate"></script>
 </body>
 </html>
