@@ -24,7 +24,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
 
-  <link rel="stylesheet" href="styles.css?v=v40.19-isolate">
+  <link rel="stylesheet" href="styles.css?v=v40.20-bulk">
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', function() {
@@ -505,7 +505,8 @@
           <button class="icon-btn" id="closeBulkModalBtn" aria-label="Close modal">&times;</button>
         </div>
         <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 14px; line-height: 1.4;">
-          Auto-generate conducted class entries for past dates. All generated classes default to <strong>NIL (All Present)</strong> so you only need to edit absentees for dates students missed.
+          Auto-generate conducted class entries for past dates. Defaults to <strong>NIL (All Present)</strong> — edit absentees later.
+          Slot is not required here so every staff subject for the same section can be stored for shortage (no slot fights between teachers).
         </p>
 
         <form id="bulkGeneratorForm" onsubmit="return false;">
@@ -528,23 +529,12 @@
             </div>
           </div>
 
-          <div class="form-row">
-            <div class="form-group">
-              <label for="bulkSubjectInput">Subject</label>
-              <select id="bulkSubjectInput" class="form-select" required></select>
-            </div>
-            <div class="form-group">
-              <label for="bulkSlotSelect">Slot / Time Period</label>
-              <select id="bulkSlotSelect" class="form-select" required>
-                <option value="1">Slot 1</option>
-                <option value="2">Slot 2</option>
-                <option value="3">Slot 3</option>
-                <option value="4">Slot 4</option>
-                <option value="5">Slot 5</option>
-                <option value="6">Slot 6</option>
-              </select>
-            </div>
+          <div class="form-group">
+            <label for="bulkSubjectInput">Subject</label>
+            <select id="bulkSubjectInput" class="form-select" required></select>
           </div>
+          <!-- Slot hidden: bulk shortage backfill auto-uses Slot 1; daily Mark Absentees still enforces slots -->
+          <input type="hidden" id="bulkSlotSelect" value="1" />
 
           <div class="form-row">
             <div class="form-group">
@@ -867,6 +857,6 @@
   <datalist id="subjectDatalist"></datalist>
 
   <script src="parser.js?v=v40.18-mgmec"></script>
-  <script src="app.js?v=v40.19-isolate"></script>
+  <script src="app.js?v=v40.20-bulk"></script>
 </body>
 </html>

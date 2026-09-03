@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'mgmec-absentee-informer';
-const CACHE_NAME = 'mgmec-absentee-informer-v119-isolate';
+const CACHE_NAME = 'mgmec-absentee-informer-v120-bulk';
 
 function isOwnCache(name) {
   return String(name || '').indexOf(CACHE_PREFIX) === 0;
