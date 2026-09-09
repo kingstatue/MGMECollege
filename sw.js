@@ -1,31 +1,18 @@
-const CACHE_PREFIX = 'mgmec-absentee-informer';
-const CACHE_NAME = 'mgmec-absentee-informer-v120-bulk';
-
-function isOwnCache(name) {
-  return String(name || '').indexOf(CACHE_PREFIX) === 0;
-}
-
-function isOtherCollegeAppPath(pathname) {
-  const p = String(pathname || '');
-  return p.indexOf('/att_College_app/') !== -1
-    || p.indexOf('/atbo/') !== -1
-    || p.indexOf('/att_appAllstreams/') !== -1
-    || p.indexOf('/aaaacrypt/') !== -1;
-}
+const CACHE_NAME = 'mgmec-absentee-informer-v123-bulk-slot-guard';
 
 // Install Event - Instant non-blocking activation (0ms SW installation)
 self.addEventListener('install', (event) => {
   self.skipWaiting();
 });
 
-// Activate Event - Claim clients immediately and purge ONLY this app's old caches
+// Activate Event - Claim clients immediately and purge old caches
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames.map((cache) => {
-          if (isOwnCache(cache) && cache !== CACHE_NAME) {
-            console.log('[PWA SW] Deleting old evening cache:', cache);
+          if (cache !== CACHE_NAME) {
+            console.log('[PWA SW] Deleting old cache:', cache);
             return caches.delete(cache);
           }
         })
@@ -48,9 +35,6 @@ self.addEventListener('fetch', (event) => {
 
   // Bypass Google Apps Script & external APIs
   if (url.origin !== location.origin) return;
-
-  // Never intercept the day college app if both are hosted on the same origin
-  if (isOtherCollegeAppPath(url.pathname)) return;
 
   event.respondWith(
     fetch(event.request)

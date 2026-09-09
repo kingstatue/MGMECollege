@@ -795,19 +795,6 @@ function isBulkPastEntry(entry) {
     return String(entry.timestamp || '') === 'Bulk Past Entry';
 }
 
-/**
- * Gate for shortage backfill / history edit:
- * When EDITING an existing row, a different subject on the same slot is NOT a conflict.
- * New daily Mark Absentees (no editOrig) stays strict.
- */
-function shouldIgnoreOtherSubjectSlotConflict(editOrig, otherEntry, incomingSubject) {
-    if (!editOrig || !otherEntry) return false;
-    const peerSubj = (otherEntry && typeof otherEntry === 'object') ? otherEntry.subject : otherEntry;
-    const incoming = incomingSubject || editOrig.subject;
-    if (subjectsAreSame(peerSubj, incoming)) return false;
-    return true;
-}
-
 function checkDoubleEntryLive(dateVal, yearVal, sectionVal, subjectVal, slotVal, rollVal, alertBoxElem, submitBtnTextElem) {
     if (!alertBoxElem) return null;
 
@@ -838,11 +825,6 @@ function checkDoubleEntryLive(dateVal, yearVal, sectionVal, subjectVal, slotVal,
         // If BOTH are Combined AND subjects have DIFFERENT names, they are parallel electives/classes on the same slot (e.g. Kannada & Hindi)!
         if (isComb1 && isComb2 && cleanSubject.length > 0 && (item.subject || '').trim().toLowerCase() !== cleanSubject.toLowerCase()) {
             return false; // Not a conflict!
-        }
-
-        // Bulk-past edit only: other subjects on this slot are allowed
-        if (shouldIgnoreOtherSubjectSlotConflict(skipSelf, item, cleanSubject)) {
-            return false;
         }
 
         return true; // Conflict or Match found!
@@ -1488,11 +1470,6 @@ async function submitData(dateVal, rollNumbersRaw, yearVal, sectionVal, subjectV
                 return false; // Parallel elective
             }
 
-            // Bulk-past edit only: other subjects on this slot are allowed
-            if (shouldIgnoreOtherSubjectSlotConflict(editOrig, item, cleanSubject)) {
-                return false;
-            }
-
             return true;
         });
     }
@@ -1505,17 +1482,12 @@ async function submitData(dateVal, rollNumbersRaw, yearVal, sectionVal, subjectV
         sheetConflict = { exists: false, offline: true };
     }
 
-    if (sheetConflict.exists && !sheetConflict.offline &&
-        shouldIgnoreOtherSubjectSlotConflict(editOrig, sheetConflict, cleanSubject)) {
-        sheetConflict = { exists: false, bulkPastPeer: true };
-    }
-
     const hasConflict = !!existingEntry || !!(sheetConflict.exists && !sheetConflict.offline);
     let finalRolls = formattedRolls;
     let finalRollsArr = rollNumbersArray;
     let conflictChoice = 'create';
 
-    // Quiet update when editing own subject from History (bulk multi-subject Slot 1 OK)
+    // Quiet update when editing own subject from History
     const editingOwnSubject = !!(editOrig && (
         (existingEntry && subjectsAreSame(existingEntry.subject, cleanSubject)) ||
         (sheetConflict.exists && subjectsAreSame(sheetConflict.subject, cleanSubject)) ||
@@ -2084,11 +2056,11 @@ function isYearMatching(itemYear, filterYear) {
 
 function isSubjectMatching(sub1, sub2) {
     if (!sub1 || !sub2) return true;
-    const s1 = String(sub1).toLowerCase().trim();
-    const s2 = String(sub2).toLowerCase().trim();
+    const s1 = String(sub1).toLowerCase().replace(/\s+/g, ' ').trim();
+    const s2 = String(sub2).toLowerCase().replace(/\s+/g, ' ').trim();
     if (s1 === 'all' || s2 === 'all') return true;
-    if (s1 === s2) return true;
-    return s1.includes(s2) || s2.includes(s1);
+    // Exact paper only — "DBMS" must not count "DBMS Lab", "FOC Lab" must not count "FOC".
+    return s1 === s2;
 }
 
 function isStreamMatchEvening(s1, s2) {
@@ -2108,6 +2080,61 @@ function getTodayEntries() {
     const todayItems = deptItems.filter(item => normalizeHistoryDate(item.date) === today);
     // Cap high enough for a full college day (was 30 — hid ~15 entries)
     return [...pendingOtherDays, ...todayItems].slice(0, 120);
+}
+
+/** True when timestamp is a status placeholder, not a real clock time. */
+function isPlaceholderHistoryTime(ts) {
+    const s = String(ts || '').trim();
+    if (!s) return true;
+    const u = s.toLowerCase();
+    return u === 'from sheet' ||
+        u === 'bulk past entry' ||
+        u.indexOf('pending') !== -1 ||
+        u.indexOf('synced from phone') !== -1;
+}
+
+/** Prefer local submit clock time; else sheet Timestamp; never keep "From Sheet". */
+function resolveHistoryTimestamp(serverTs, prevItem) {
+    if (prevItem && prevItem.timestamp && !isPlaceholderHistoryTime(prevItem.timestamp)) {
+        return String(prevItem.timestamp);
+    }
+    const raw = serverTs != null ? String(serverTs).trim() : '';
+    if (raw && !isPlaceholderHistoryTime(raw)) return raw;
+    try {
+        if (raw && /^\d{4}-\d{2}-\d{2}/.test(raw)) {
+            const d = new Date(raw);
+            if (!isNaN(d.getTime())) {
+                return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            }
+        }
+    } catch (e) {}
+    return '';
+}
+
+function mapServerHistoryEntry(e, stream, fallbackDate) {
+    return {
+        stream: stream || 'BCA',
+        date: normalizeHistoryDate(e.date) || e.date || fallbackDate || getTodayISOString(),
+        year: e.year || 'First Year',
+        section: e.section || 'A',
+        subject: e.subject || 'Subject',
+        slot: parseInt(e.slot, 10) || 1,
+        rollNumbers: e.rollNumbers || 'NIL',
+        offline: false,
+        timestamp: resolveHistoryTimestamp(e.timestamp || e.time || e.submittedAt || '', null)
+    };
+}
+
+function mergeServerHistoryEntry(sEntry, prev) {
+    if (prev && typeof isBulkPastEntry === 'function' && isBulkPastEntry(prev)) {
+        sEntry.bulkPast = true;
+        if (String(prev.timestamp || '') === 'Bulk Past Entry') {
+            sEntry.timestamp = prev.timestamp;
+            return sEntry;
+        }
+    }
+    sEntry.timestamp = resolveHistoryTimestamp(sEntry.timestamp, prev);
+    return sEntry;
 }
 
 function updateTodayBadge() {
@@ -2297,22 +2324,12 @@ function fetchTodayServerHistory() {
             // 2. Add or update with server entries (from other devices/sheet)
             data.entries.forEach(e => {
                 if (!e) return;
-                const sEntry = {
-                    stream: stream,
-                    date: dateVal,
-                    year: e.year || 'First Year',
-                    section: e.section || 'A',
-                    subject: e.subject || '',
-                    slot: parseInt(e.slot, 10) || 1,
-                    rollNumbers: e.rollNumbers || 'NIL',
-                    offline: false,
-                    timestamp: 'From Sheet'
-                };
+                const sEntry = mapServerHistoryEntry(e, stream, dateVal);
                 const k = historyMatchKey(sEntry);
                 const existing = byKey.get(k);
                 // Only overwrite if existing entry is absent or synced
                 if (!existing || existing.offline === false) {
-                    byKey.set(k, sEntry);
+                    byKey.set(k, mergeServerHistoryEntry(sEntry, existing));
                 }
             });
 
@@ -2474,17 +2491,7 @@ function fetchAllServerHistory(cb) {
         try { delete window[cbName]; } catch (e) {}
 
         if (data && data.result === 'success' && Array.isArray(data.entries)) {
-            const serverEntries = data.entries.map(e => ({
-                stream: stream,
-                date: normalizeHistoryDate(e.date) || e.date || getTodayISOString(),
-                year: e.year || 'First Year',
-                section: e.section || 'A',
-                subject: e.subject || 'Subject',
-                slot: parseInt(e.slot, 10) || 1,
-                rollNumbers: e.rollNumbers || 'NIL',
-                offline: false,
-                timestamp: 'From Sheet'
-            }));
+            const serverEntries = data.entries.map(e => mapServerHistoryEntry(e, stream, null));
 
             const history = readAllHistory();
             const byKey = new Map();
@@ -2498,7 +2505,7 @@ function fetchAllServerHistory(cb) {
                 const k = historyMatchKey(sEntry);
                 const existing = byKey.get(k);
                 if (!existing || existing.offline === false) {
-                    byKey.set(k, sEntry);
+                    byKey.set(k, mergeServerHistoryEntry(Object.assign({}, sEntry), existing));
                 }
             });
 
@@ -2561,15 +2568,19 @@ function renderHistoryList() {
             ? ' · ' + escapeHTML(item.date)
             : '';
 
+        const timeShown = (!isPlaceholderHistoryTime(item.timestamp) && item.timestamp)
+            ? String(item.timestamp)
+            : '';
+
         const statusBadge = item.offline 
-            ? '<span class="badge badge-warning" style="background: rgba(239,68,68,0.2); color: #f87171; border: 1px solid rgba(239,68,68,0.3);">Offline (Pending Sync)</span>'
+            ? '<span class="badge badge-warning" style="background: rgba(239,68,68,0.2); color: #f87171; border: 1px solid rgba(239,68,68,0.3);">Pending Sync</span>'
             : '<span class="badge badge-success">Synced to Sheet</span>';
 
         return (
         '<div class="history-card">' +
             '<div class="history-top">' +
                 '<span class="history-title">' + escapeHTML(item.year) + ' Sec ' + escapeHTML(item.section) + dateLabel + '</span>' +
-                '<span class="history-time">' + escapeHTML(item.timestamp || '') + '</span>' +
+                '<span class="history-time">' + escapeHTML(timeShown) + '</span>' +
             '</div>' +
             '<div class="history-details">' +
                 '<span>Subject: <strong>' + escapeHTML(item.subject) + '</strong></span>' +
@@ -3127,8 +3138,8 @@ function updateSlotDropdownOptions(dateVal) {
 
     const slotSelects = [
         document.getElementById('directSlotSelect'),
-        document.getElementById('slotSelect')
-        // bulkSlotSelect is a hidden input (always Slot 1) — do not rebuild as <select>
+        document.getElementById('slotSelect'),
+        document.getElementById('bulkSlotSelect')
     ];
 
     slotSelects.forEach(sel => {
@@ -4624,7 +4635,7 @@ function initSubjectManager() {
 
 // Version upgrade check to purge stale cached cloud subjects on GitHub Pages update
 (function checkAppCacheVersion() {
-    const APP_VER = 'v27.19_bulk_past_slot_gate';
+    const APP_VER = 'v27.21_sync_badge';
     if (localStorage.getItem('mgmec_app_ver') !== APP_VER) {
         localStorage.removeItem('mgmec_cloud_subjects');
         localStorage.setItem('mgmec_app_ver', APP_VER);
@@ -4797,6 +4808,53 @@ function closeBulkGeneratorModal() {
     if (modal) modal.classList.remove('active');
 }
 
+/** Bulk only: another paper already occupies this date+section+slot (regular submit unchanged). */
+function collectBulkSlotConflicts(generatedItems) {
+    const history = readAllHistory();
+    const conflicts = [];
+    const seen = {};
+    (generatedItems || []).forEach(item => {
+        const stream = item.stream || currentDept || 'BCA';
+        const date = normalizeHistoryDate(item.date);
+        const slot = parseInt(item.slot, 10) || 1;
+        const occupant = history.find(h => {
+            if (!isStreamMatchEvening(h.stream, stream)) return false;
+            if (normalizeHistoryDate(h.date) !== date) return false;
+            if (!isYearMatching(h.year, item.year)) return false;
+            if ((parseInt(h.slot, 10) || 1) !== slot) return false;
+            if (subjectsAreSame(h.subject, item.subject)) return false;
+            if (!isSectionOverlap(h.section || 'A', item.section || 'A')) return false;
+            return true;
+        });
+        if (!occupant) return;
+        const key = date + '|' + String(occupant.subject || '').toLowerCase();
+        if (seen[key]) return;
+        seen[key] = true;
+        conflicts.push({
+            date: date,
+            slot: slot,
+            existingSubject: occupant.subject,
+            existingSection: occupant.section
+        });
+    });
+    return conflicts;
+}
+
+function alertBulkSlotConflicts(conflicts, newSubject, slotVal) {
+    const lines = conflicts.slice(0, 8).map(c => {
+        const sec = c.existingSection;
+        const secLabel = sec === 'ONLY' ? 'Main' : (sec === 'ALL' ? 'Combined' : ('Sec ' + (sec || '?')));
+        return '• ' + c.date + ' — ' + (c.existingSubject || 'Subject') + ' (' + secLabel + ')';
+    });
+    const extra = conflicts.length > 8 ? '\n… and ' + (conflicts.length - 8) + ' more date(s)' : '';
+    alert(
+        'Cannot generate ' + newSubject + ' on Slot ' + slotVal + '.\n\n' +
+        'That slot already has another subject on ' + conflicts.length + ' date(s):\n\n' +
+        lines.join('\n') + extra + '\n\n' +
+        'Choose a different slot. Generating the same subject on this slot is allowed.'
+    );
+}
+
 async function executeBulkPastGenerator() {
     const yearEl = document.getElementById('bulkYearSelect');
     const secEl = document.getElementById('bulkSectionSelect');
@@ -4807,8 +4865,8 @@ async function executeBulkPastGenerator() {
     const yearVal = yearEl ? yearEl.value : '';
     const secVal = secEl ? secEl.value : '';
     const subjVal = subjEl ? subjEl.value : '';
-    // Slot ignored for bulk shortage backfill — always Slot 1 (no cross-staff conflict)
-    const slotVal = '1';
+    const slotEl = document.getElementById('bulkSlotSelect');
+    const slotVal = slotEl ? String(parseInt(slotEl.value, 10) || 1) : '1';
     const startVal = startEl ? startEl.value : '';
     const endVal = endEl ? endEl.value : '';
     const checkedDays = Array.from(document.querySelectorAll('.bulkDayCheck:checked')).map(c => parseInt(c.value, 10));
@@ -4861,7 +4919,7 @@ async function executeBulkPastGenerator() {
                     year: yearVal,
                     section: secVal,
                     subject: subjVal,
-                    slot: '1',
+                    slot: slotVal,
                     rollNumbers: 'NIL',
                     bulkPast: true,
                     offline: false,
@@ -4876,6 +4934,12 @@ async function executeBulkPastGenerator() {
             return;
         }
 
+        const bulkConflicts = collectBulkSlotConflicts(generatedItems);
+        if (bulkConflicts.length > 0) {
+            alertBulkSlotConflicts(bulkConflicts, subjVal, slotVal);
+            return;
+        }
+
         for (const item of generatedItems) {
             saveToLocalHistory(item);
         }
@@ -4883,7 +4947,7 @@ async function executeBulkPastGenerator() {
         closeBulkGeneratorModal();
 
         const secLabel = secVal === 'ONLY' ? 'Main' : (secVal === 'ALL' ? 'Combined' : ('Sec ' + secVal));
-        showCustomToast('⚡ Created ' + generatedItems.length + ' Past Classes!', 'Added for ' + yearVal + ' ' + secLabel + ' (' + subjVal + '). Edit absentees anytime — no slot fights with other subjects.');
+        showCustomToast('⚡ Created ' + generatedItems.length + ' Past Classes!', 'Added for ' + yearVal + ' ' + secLabel + ' (' + subjVal + ') Slot ' + slotVal + '. You can now edit absentees.');
         try { renderHistoryList(); } catch (e) {}
         try { updateTodayBadge(); } catch (e) {}
 
@@ -5751,12 +5815,12 @@ function fetchServerHistoryForShortage(stream, period, fVal, tVal, callback) {
                     slot: String(parseInt(srv.slot, 10) || 1),
                     rollNumbers: formattedRolls,
                     offline: false,
-                    timestamp: srv.timestamp || 'From Sheet'
+                    timestamp: resolveHistoryTimestamp(srv.timestamp || srv.time || '', null)
                 };
                 const k = historyMatchKey(srvObj);
                 const existing = byKey.get(k);
                 if (k && (!existing || existing.offline === false)) {
-                    byKey.set(k, srvObj);
+                    byKey.set(k, mergeServerHistoryEntry(srvObj, existing));
                 }
             });
 

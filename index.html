@@ -24,7 +24,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
 
-  <link rel="stylesheet" href="styles.css?v=v40.20-bulk">
+  <link rel="stylesheet" href="styles.css?v=v40.22-sync-badge">
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', function() {
@@ -506,7 +506,7 @@
         </div>
         <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 14px; line-height: 1.4;">
           Auto-generate conducted class entries for past dates. Defaults to <strong>NIL (All Present)</strong> — edit absentees later.
-          Slot is not required here so every staff subject for the same section can be stored for shortage (no slot fights between teachers).
+          Pick a <strong>slot per subject</strong> (e.g. DBMS → Slot 1, C# → Slot 2) so Raw Data keeps one paper per slot.
         </p>
 
         <form id="bulkGeneratorForm" onsubmit="return false;">
@@ -529,12 +529,23 @@
             </div>
           </div>
 
-          <div class="form-group">
-            <label for="bulkSubjectInput">Subject</label>
-            <select id="bulkSubjectInput" class="form-select" required></select>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="bulkSubjectInput">Subject</label>
+              <select id="bulkSubjectInput" class="form-select" required></select>
+            </div>
+            <div class="form-group">
+              <label for="bulkSlotSelect">Slot / Time</label>
+              <select id="bulkSlotSelect" class="form-select" required>
+                <option value="1">Slot 1 (1:30 - 2:15 PM / 1:00 - 1:45 PM)</option>
+                <option value="2">Slot 2 (2:15 - 3:00 PM / 1:45 - 2:30 PM)</option>
+                <option value="3">Slot 3 (3:00 - 3:45 PM / 2:30 - 3:15 PM)</option>
+                <option value="4">Slot 4 (3:45 - 4:30 PM / 3:15 - 4:00 PM)</option>
+                <option value="5">Slot 5 (4:45 - 5:30 PM / 4:15 - 5:00 PM)</option>
+                <option value="6">Slot 6 (5:30 - 6:15 PM / 5:00 - 5:45 PM)</option>
+              </select>
+            </div>
           </div>
-          <!-- Slot hidden: bulk shortage backfill auto-uses Slot 1; daily Mark Absentees still enforces slots -->
-          <input type="hidden" id="bulkSlotSelect" value="1" />
 
           <div class="form-row">
             <div class="form-group">
@@ -856,7 +867,7 @@
 
   <datalist id="subjectDatalist"></datalist>
 
-  <script src="parser.js?v=v40.18-mgmec"></script>
-  <script src="app.js?v=v40.20-bulk"></script>
+  <script src="parser.js?v=v40.22-sync-badge"></script>
+  <script src="app.js?v=v40.25-bulk-slot-guard"></script>
 </body>
 </html>
