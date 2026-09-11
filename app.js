@@ -1385,7 +1385,8 @@ function showSlotConflictDialog(params) {
     });
 }
 
-async function submitData(dateVal, rollNumbersRaw, yearVal, sectionVal, subjectVal, slotVal, btnElem, textElem, spinnerElem) {
+async function submitData(dateVal, rollNumbersRaw, yearVal, sectionVal, subjectVal, slotVal, btnElem, textElem, spinnerElem, opts) {
+    opts = opts || {};
     const cleanDate = dateVal || getTodayISOString();
     const cleanYear = String(yearVal || '').trim();
     if (!cleanYear) {
@@ -1572,13 +1573,19 @@ async function submitData(dateVal, rollNumbersRaw, yearVal, sectionVal, subjectV
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         });
         editingOriginalEntry = null;
-        closeConfirmationModal();
-        resetAllInputs();
-        showSuccessToast(payload);
+        if (!opts.skipReset) {
+            closeConfirmationModal();
+            resetAllInputs();
+        }
+        if (!opts.silent) {
+            showSuccessToast(payload);
+        }
 
-        setTimeout(() => {
-            fetchTodayServerHistory();
-        }, 800);
+        if (!opts.skipRefresh) {
+            setTimeout(() => {
+                fetchTodayServerHistory();
+            }, 800);
+        }
         return { status: 'ok' };
 
     } catch (error) {
@@ -1590,14 +1597,18 @@ async function submitData(dateVal, rollNumbersRaw, yearVal, sectionVal, subjectV
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         });
         editingOriginalEntry = null;
-        closeConfirmationModal();
-        resetAllInputs();
+        if (!opts.skipReset) {
+            closeConfirmationModal();
+            resetAllInputs();
+        }
         
         const rollCount = payload.rollNumbers === 'NIL' ? 0 : (normalizeRollNumbers(payload.rollNumbers).length);
-        showCustomToast(
-            'Attendance Recorded (Offline)',
-            `${rollCount} absentee(s) saved on phone (Offline Pending). Will auto-sync when online.`
-        );
+        if (!opts.silent) {
+            showCustomToast(
+                'Attendance Recorded (Offline)',
+                `${rollCount} absentee(s) saved on phone (Offline Pending). Will auto-sync when online.`
+            );
+        }
         return { status: 'offline' };
     } finally {
         if (btnElem) btnElem.disabled = false;
@@ -2361,30 +2372,144 @@ function fetchTodayServerHistory() {
 let currentHistoryTabMode = 'TODAY';
 let isFetchingAllServerHistory = false;
 
+function historyYearSortRank(yearVal) {
+    const p = (typeof hodYearPrefix === 'function') ? hodYearPrefix(yearVal) : String(yearVal || '');
+    if (p === 'I' || p === '1') return 1;
+    if (p === 'II' || p === '2') return 2;
+    if (p === 'III' || p === '3') return 3;
+    return 9;
+}
+
+function historyGroupKey(item) {
+    return historyYearSortRank(item.year) + '|' +
+        ((typeof hodYearPrefix === 'function') ? hodYearPrefix(item.year) : String(item.year || '')) + '|' +
+        normalizeSectionCode(item.section || '');
+}
+
+function historyCardSectionLabel(section) {
+    const sec = section || 'A';
+    const secNorm = normalizeSectionCode(sec);
+    if (secNorm === 'ONLY' || String(sec).trim().toUpperCase() === 'ONLY') return 'Main Class';
+    if (secNorm === 'ALL') return 'Combined';
+    return 'Sec ' + sec;
+}
+
+function historyGroupLabel(item) {
+    const yr = item.year || 'Year';
+    const sec = item.section || 'A';
+    const secNorm = normalizeSectionCode(sec);
+    if (secNorm === 'ONLY' || String(sec).trim().toUpperCase() === 'ONLY') {
+        return yr + ' — Main Class';
+    }
+    if (secNorm === 'ALL') {
+        return yr + ' — Combined';
+    }
+    return yr + ' — Sec ' + sec;
+}
+
+function sortHistoryEntriesGrouped(matched) {
+    return matched.sort((a, b) => {
+        const yA = historyYearSortRank(a.year);
+        const yB = historyYearSortRank(b.year);
+        if (yA !== yB) return yA - yB;
+        const sA = normalizeSectionCode(a.section || '');
+        const sB = normalizeSectionCode(b.section || '');
+        if (sA !== sB) return sA.localeCompare(sB);
+        const dA = normalizeHistoryDate(a.date) || '';
+        const dB = normalizeHistoryDate(b.date) || '';
+        if (dA !== dB) return dB.localeCompare(dA);
+        return (parseInt(b.slot, 10) || 1) - (parseInt(a.slot, 10) || 1);
+    });
+}
+
+/** On Today: keep Pending Sync rows first, then year/section groups. */
+function finalizeHistoryDrawerOrder(matched) {
+    const list = Array.isArray(matched) ? matched.slice() : [];
+    if (currentHistoryTabMode !== 'TODAY') {
+        return sortHistoryEntriesGrouped(list);
+    }
+    const pending = list.filter(item => item && item.offline === true);
+    const rest = list.filter(item => !(item && item.offline === true));
+    return sortHistoryEntriesGrouped(pending).concat(sortHistoryEntriesGrouped(rest));
+}
+
+function historySectionsEquivalent(a, b) {
+    const na = normalizeSectionCode(a || '');
+    const nb = normalizeSectionCode(b || '');
+    if (na === nb) return true;
+    if ((na === 'C' && nb === 'C_AIML') || (na === 'C_AIML' && nb === 'C')) return true;
+    return false;
+}
+
+/** Section options for history drawer only (does not touch mark-absentees selects). */
+function populateHistorySectionFilter() {
+    const sectionFilter = document.getElementById('allHistorySectionFilter');
+    if (!sectionFilter) return;
+
+    const dept = currentDept || 'BCA';
+    const cfg = DEPT_CONFIG[dept] || DEPT_CONFIG.BCA;
+    const prev = sectionFilter.value || 'ALL';
+    let options = [{ val: 'ALL', label: 'All Sections' }];
+
+    if (cfg && Array.isArray(cfg.sections) && cfg.sections.length) {
+        cfg.sections.forEach(sec => {
+            const label = (sec === 'ONLY') ? 'Class (No Section)' : ('Section ' + sec);
+            options.push({ val: sec, label: label });
+        });
+    } else {
+        options = options.concat([
+            { val: 'A', label: 'Section A' },
+            { val: 'B', label: 'Section B' }
+        ]);
+    }
+    options.push({ val: '__COMBINED__', label: 'Combined only' });
+
+    sectionFilter.innerHTML = '';
+    options.forEach(o => {
+        const opt = document.createElement('option');
+        opt.value = o.val;
+        opt.textContent = o.label;
+        sectionFilter.appendChild(opt);
+    });
+
+    const stillValid = Array.from(sectionFilter.options).some(o => o.value === prev);
+    sectionFilter.value = stillValid ? prev : 'ALL';
+}
+
+function historySectionFilterMatches(itemSection, filterVal) {
+    if (!filterVal || filterVal === 'ALL') return true;
+    const itemNorm = normalizeSectionCode(itemSection || '');
+    if (filterVal === '__COMBINED__') return itemNorm === 'ALL';
+    return historySectionsEquivalent(itemSection, filterVal);
+}
+
 function getActiveDrawerEntries() {
     const allItems = readAllHistory();
+    const yearFilter = document.getElementById('allHistoryYearFilter');
+    const sectionFilter = document.getElementById('allHistorySectionFilter');
+    const dateFilter = document.getElementById('allHistoryDateFilter');
+
+    const selYear = yearFilter ? yearFilter.value : 'ALL';
+    const selSection = sectionFilter ? sectionFilter.value : 'ALL';
+    const selDate = (currentHistoryTabMode === 'ALL' && dateFilter && dateFilter.value)
+        ? normalizeHistoryDate(dateFilter.value)
+        : '';
+
+    let base = [];
     if (currentHistoryTabMode === 'ALL') {
-        const yearFilter = document.getElementById('allHistoryYearFilter');
-        const dateFilter = document.getElementById('allHistoryDateFilter');
-
-        const selYear = yearFilter ? yearFilter.value : 'ALL';
-        const selDate = dateFilter && dateFilter.value ? normalizeHistoryDate(dateFilter.value) : '';
-
-        const matched = allItems.filter(item => {
-            if (!isStreamMatchEvening(item.stream, currentDept)) return false;
-            if (selYear && selYear !== 'ALL' && isYearMatching(item.year, selYear) === false) return false;
-            if (selDate && selDate !== '' && normalizeHistoryDate(item.date) !== selDate) return false;
-            return true;
-        });
-
-        return matched.sort((a, b) => {
-            const dA = normalizeHistoryDate(a.date) || '';
-            const dB = normalizeHistoryDate(b.date) || '';
-            if (dA !== dB) return dB.localeCompare(dA);
-            return (parseInt(b.slot, 10) || 1) - (parseInt(a.slot, 10) || 1);
-        });
+        base = allItems.filter(item => isStreamMatchEvening(item.stream, currentDept));
+    } else {
+        base = getTodayEntries();
     }
-    return getTodayEntries();
+
+    const matched = base.filter(item => {
+        if (selYear && selYear !== 'ALL' && isYearMatching(item.year, selYear) === false) return false;
+        if (!historySectionFilterMatches(item.section, selSection)) return false;
+        if (selDate && selDate !== '' && normalizeHistoryDate(item.date) !== selDate) return false;
+        return true;
+    });
+
+    return finalizeHistoryDrawerOrder(matched);
 }
 
 function updateHistoryTabStyles() {
@@ -2393,6 +2518,7 @@ function updateHistoryTabStyles() {
     const titleEl = document.getElementById('historyDrawerTitle');
     const subEl = document.getElementById('todayDrawerSubtitle');
     const filterRow = document.getElementById('allHistoryFilterRow');
+    const dateFilter = document.getElementById('allHistoryDateFilter');
 
     if (tabToday && tabAll) {
         if (currentHistoryTabMode === 'ALL') {
@@ -2401,15 +2527,18 @@ function updateHistoryTabStyles() {
             tabAll.style.background = 'var(--primary-color, #6366f1)';
             tabAll.style.color = '#fff';
             if (titleEl) titleEl.textContent = 'All History';
-            if (subEl) subEl.textContent = 'View, edit or delete any past class entry';
+            if (subEl) subEl.textContent = 'Grouped by year & section — edit or delete any entry';
             if (filterRow) filterRow.style.display = 'flex';
+            if (dateFilter) dateFilter.style.display = '';
         } else {
             tabToday.style.background = 'var(--primary-color, #6366f1)';
             tabToday.style.color = '#fff';
             tabAll.style.background = 'transparent';
             tabAll.style.color = 'var(--text-muted, #94a3b8)';
             if (titleEl) titleEl.textContent = 'Today’s entries';
-            if (filterRow) filterRow.style.display = 'none';
+            if (subEl) subEl.textContent = 'Grouped by year & section — correct any class marked today';
+            if (filterRow) filterRow.style.display = 'flex';
+            if (dateFilter) dateFilter.style.display = 'none';
         }
     }
 }
@@ -2419,7 +2548,10 @@ function initHistoryDrawerTabs() {
     const tabAll = document.getElementById('historyTabAll');
     const clearFilterBtn = document.getElementById('clearAllHistoryFilterBtn');
     const yearFilter = document.getElementById('allHistoryYearFilter');
+    const sectionFilter = document.getElementById('allHistorySectionFilter');
     const dateFilter = document.getElementById('allHistoryDateFilter');
+
+    try { populateHistorySectionFilter(); } catch (e) {}
 
     if (tabToday) {
         tabToday.onclick = (e) => {
@@ -2445,7 +2577,14 @@ function initHistoryDrawerTabs() {
     }
 
     if (yearFilter) {
-        yearFilter.onchange = () => renderHistoryList();
+        yearFilter.onchange = () => {
+            try { populateHistorySectionFilter(); } catch (e) {}
+            renderHistoryList();
+        };
+    }
+
+    if (sectionFilter) {
+        sectionFilter.onchange = () => renderHistoryList();
     }
 
     if (dateFilter) {
@@ -2456,7 +2595,9 @@ function initHistoryDrawerTabs() {
         clearFilterBtn.onclick = (e) => {
             if (e) e.preventDefault();
             if (yearFilter) yearFilter.value = 'ALL';
+            if (sectionFilter) sectionFilter.value = 'ALL';
             if (dateFilter) dateFilter.value = '';
+            try { populateHistorySectionFilter(); } catch (e2) {}
             renderHistoryList();
         };
     }
@@ -2551,13 +2692,25 @@ function renderHistoryList() {
 
     if (displayEntries.length === 0) {
         const emptyMsg = currentHistoryTabMode === 'ALL'
-            ? 'No attendance history saved yet.'
-            : 'No entries today — submit above.';
+            ? 'No attendance history for this filter.'
+            : 'No entries today for this filter — submit above.';
         historyListEl.innerHTML = '<p class="transcript-placeholder" style="text-align: center; margin-top: 20px;">' + emptyMsg + '</p>';
         return;
     }
 
-    historyListEl.innerHTML = displayEntries.map((item, index) => {
+    let html = '';
+    let lastGroup = null;
+    displayEntries.forEach((item, index) => {
+        const gKey = historyGroupKey(item);
+        if (gKey !== lastGroup) {
+            lastGroup = gKey;
+            const count = displayEntries.filter(x => historyGroupKey(x) === gKey).length;
+            html += '<div class="history-group-header" style="margin: 12px 0 6px; padding: 6px 10px; border-radius: 8px; background: rgba(99,102,241,0.12); border: 1px solid rgba(99,102,241,0.25); font-size: 0.8rem; font-weight: 700; color: var(--text-primary, #e2e8f0); display: flex; justify-content: space-between; align-items: center;">' +
+                '<span>' + escapeHTML(historyGroupLabel(item)) + '</span>' +
+                '<span style="font-weight: 600; opacity: 0.75; font-size: 0.72rem;">' + count + ' entr' + (count === 1 ? 'y' : 'ies') + '</span>' +
+            '</div>';
+        }
+
         const slotNum = parseInt(item.slot, 10) || 1;
         const slotLabel = SLOT_TIME_LABELS[slotNum] || ('Slot ' + slotNum);
         const rolls = item.rollNumbers === 'NIL'
@@ -2576,10 +2729,10 @@ function renderHistoryList() {
             ? '<span class="badge badge-warning" style="background: rgba(239,68,68,0.2); color: #f87171; border: 1px solid rgba(239,68,68,0.3);">Pending Sync</span>'
             : '<span class="badge badge-success">Synced to Sheet</span>';
 
-        return (
+        html += (
         '<div class="history-card">' +
             '<div class="history-top">' +
-                '<span class="history-title">' + escapeHTML(item.year) + ' Sec ' + escapeHTML(item.section) + dateLabel + '</span>' +
+                '<span class="history-title">' + escapeHTML(item.year) + ' ' + escapeHTML(historyCardSectionLabel(item.section)) + dateLabel + '</span>' +
                 '<span class="history-time">' + escapeHTML(timeShown) + '</span>' +
             '</div>' +
             '<div class="history-details">' +
@@ -2596,7 +2749,8 @@ function renderHistoryList() {
             '</div>' +
         '</div>'
         );
-    }).join('');
+    });
+    historyListEl.innerHTML = html;
 
     document.querySelectorAll('.btn-history-edit').forEach(btn => {
         btn.addEventListener('click', (e) => {
@@ -3064,6 +3218,8 @@ function selectDepartment(deptCode) {
 
     applyRoleUI();
     fetchCloudSubjects();
+    try { populateHistorySectionFilter(); } catch (e) {}
+    try { renderHistoryList(); } catch (e) {}
     if (navigator.onLine) {
         fetchTodayServerHistory();
     }
@@ -4176,7 +4332,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     initHODPortal();
     initShortageCalculator();
+    initInternalMarksModule();
     initBulkGenerator();
+    initPaperPasteLoader();
 
     // Voice Actions
     if (micBtn) micBtn.addEventListener('click', toggleListening);
@@ -4635,7 +4793,7 @@ function initSubjectManager() {
 
 // Version upgrade check to purge stale cached cloud subjects on GitHub Pages update
 (function checkAppCacheVersion() {
-    const APP_VER = 'v27.21_sync_badge';
+    const APP_VER = 'v27.25_flex_paste';
     if (localStorage.getItem('mgmec_app_ver') !== APP_VER) {
         localStorage.removeItem('mgmec_cloud_subjects');
         localStorage.setItem('mgmec_app_ver', APP_VER);
@@ -5020,6 +5178,481 @@ function initBulkGenerator() {
             executeBulkPastGenerator();
         });
     }
+}
+
+function paperPasteMaxSlot() {
+    if (typeof SLOT_TIME_LABELS === 'object' && SLOT_TIME_LABELS) {
+        const nums = Object.keys(SLOT_TIME_LABELS).map(Number).filter(n => n > 0);
+        if (nums.length) return Math.max.apply(null, nums);
+    }
+    return 6;
+}
+
+function paperPasteCloneSelect(fromId, toId) {
+    const from = document.getElementById(fromId);
+    const to = document.getElementById(toId);
+    if (!from || !to) return;
+    const prev = to.value;
+    to.innerHTML = from.innerHTML;
+    if (from.value) to.value = from.value;
+    else if (prev && Array.from(to.options).some(o => o.value === prev)) to.value = prev;
+}
+
+function paperPasteDefaultCalendarYear() {
+    try {
+        if (typeof getTodayISOString === 'function') {
+            const y = parseInt(String(getTodayISOString()).slice(0, 4), 10);
+            if (y > 2000) return y;
+        }
+    } catch (e) {}
+    return new Date().getFullYear();
+}
+
+function paperPasteMonthNum(name) {
+    const m = String(name || '').toLowerCase().replace(/\./g, '').slice(0, 3);
+    const map = {
+        jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+        jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12
+    };
+    return map[m] || 0;
+}
+
+function paperPasteIsoFromParts(day, month, year) {
+    let d = parseInt(day, 10);
+    let mo = parseInt(month, 10);
+    let y = parseInt(year, 10);
+    if (!y || isNaN(y)) y = paperPasteDefaultCalendarYear();
+    if (y < 100) y += (y > 50 ? 1900 : 2000);
+    if (!(d >= 1 && d <= 31 && mo >= 1 && mo <= 12)) return '';
+    const dt = new Date(y, mo - 1, d);
+    if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return '';
+    return y + '-' + String(mo).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+}
+
+/** Flexible dates: 2026-08-01, 1/8/26, 1/8, 1 Aug, 1 Aug 2026, Aug 1 */
+function paperPasteParseDate(raw) {
+    const s = String(raw || '').trim();
+    if (!s) return '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+
+    let m = s.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})$/);
+    if (m) {
+        let d = m[1];
+        let mo = m[2];
+        let y = m[3];
+        if (parseInt(mo, 10) > 12 && parseInt(d, 10) <= 12) {
+            const tmp = d; d = mo; mo = tmp;
+        }
+        return paperPasteIsoFromParts(d, mo, y);
+    }
+
+    m = s.match(/^(\d{1,2})[\/.\-](\d{1,2})$/);
+    if (m) {
+        let d = m[1];
+        let mo = m[2];
+        if (parseInt(mo, 10) > 12 && parseInt(d, 10) <= 12) {
+            const tmp = d; d = mo; mo = tmp;
+        }
+        return paperPasteIsoFromParts(d, mo, paperPasteDefaultCalendarYear());
+    }
+
+    m = s.match(/^(\d{1,2})\s+([A-Za-z]{3,9})\.?,?\s*(\d{2,4})?$/i);
+    if (m) {
+        const mo = paperPasteMonthNum(m[2]);
+        if (mo) return paperPasteIsoFromParts(m[1], mo, m[3] || paperPasteDefaultCalendarYear());
+    }
+
+    m = s.match(/^([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s*(\d{2,4})?$/i);
+    if (m) {
+        const mo = paperPasteMonthNum(m[1]);
+        if (mo) return paperPasteIsoFromParts(m[2], mo, m[3] || paperPasteDefaultCalendarYear());
+    }
+
+    return '';
+}
+
+function paperPasteExtractDateToken(line) {
+    const raw = String(line || '');
+    const patterns = [
+        /\b(\d{4}-\d{2}-\d{2})\b/,
+        /\b(\d{1,2}\s+[A-Za-z]{3,9}\.?,?\s*\d{2,4})\b/i,
+        /\b([A-Za-z]{3,9}\.?\s+\d{1,2},?\s*\d{2,4})\b/i,
+        /\b(\d{1,2}\s+[A-Za-z]{3,9}\.?)\b/i,
+        /\b([A-Za-z]{3,9}\.?\s+\d{1,2})\b/i,
+        /\b(\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4})\b/,
+        /\b(\d{1,2}[\/.\-]\d{1,2})\b/
+    ];
+    for (let i = 0; i < patterns.length; i++) {
+        const m = raw.match(patterns[i]);
+        if (!m) continue;
+        const iso = paperPasteParseDate(m[1]);
+        if (iso) {
+            return { iso: iso, index: m.index, length: m[0].length, raw: m[1] };
+        }
+    }
+    return null;
+}
+
+function paperPasteLineHasDate(line) {
+    return !!paperPasteExtractDateToken(line);
+}
+
+function paperPasteParseDataLine(line, defaultSlot) {
+    const raw = String(line || '').trim();
+    if (!raw) return null;
+
+    if (raw.indexOf('\t') !== -1) {
+        const parts = raw.split('\t').map(p => p.trim()).filter(Boolean);
+        const date = paperPasteParseDate(parts[0]);
+        if (!date) return null;
+        let slot = '';
+        let rollsParts = [];
+        if (parts.length >= 3) {
+            slot = paperPasteParseSlot(parts[1]) || '';
+            rollsParts = parts.slice(slot ? 2 : 1);
+            if (!slot) rollsParts = parts.slice(1);
+        } else if (parts.length === 2) {
+            const maybeSlot = paperPasteParseSlot(parts[1]);
+            if (maybeSlot && /^slot\s*\d+$/i.test(parts[1].replace(/\s+/g, ' ').trim())) {
+                slot = maybeSlot;
+                rollsParts = [];
+            } else if (maybeSlot && parts[1].replace(/\s/g, '').length <= 1) {
+                slot = maybeSlot;
+                rollsParts = [];
+            } else {
+                rollsParts = [parts[1]];
+            }
+        }
+        return {
+            date: date,
+            slot: slot || defaultSlot || '',
+            rolls: rollsParts.join(', ').trim() || 'NIL'
+        };
+    }
+
+    const found = paperPasteExtractDateToken(raw);
+    if (!found) return null;
+    const date = found.iso;
+
+    let rest = (raw.slice(0, found.index) + ' ' + raw.slice(found.index + found.length)).trim();
+    rest = rest.replace(/^[\s,;|\-]+|[\s,;|\-]+$/g, '').trim();
+
+    let slot = '';
+    const namedSlot = rest.match(/\bslot\s*(\d+)\b/i);
+    if (namedSlot) {
+        slot = paperPasteParseSlot(namedSlot[0]) || namedSlot[1];
+        rest = (rest.slice(0, namedSlot.index) + ' ' + rest.slice(namedSlot.index + namedSlot[0].length)).trim();
+    }
+
+    let rolls = rest.replace(/^[,;]+/, '').trim();
+    if (!rolls || /^nil$/i.test(rolls) || /^none$/i.test(rolls) || /^all present$/i.test(rolls)) {
+        rolls = 'NIL';
+    }
+
+    return {
+        date: date,
+        slot: slot || defaultSlot || '',
+        rolls: rolls
+    };
+}
+
+function paperPasteParseYear(raw) {
+    const s = String(raw || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    if (!s) return '';
+    if (/^(first|1st|i|fy|year 1|1 year|1)$/.test(s) || s.indexOf('first') !== -1) return 'First Year';
+    if (/^(second|2nd|ii|sy|year 2|2 year|2)$/.test(s) || s.indexOf('second') !== -1) return 'Second Year';
+    if (/^(third|3rd|iii|ty|year 3|3 year|3)$/.test(s) || s.indexOf('third') !== -1) return 'Third Year';
+    return '';
+}
+
+function paperPasteParseSlot(raw) {
+    const s = String(raw || '').trim();
+    if (!s) return '';
+    const m = s.match(/slot\s*(\d+)/i) || s.match(/^(\d+)$/);
+    if (!m) return '';
+    const n = parseInt(m[1], 10);
+    const max = paperPasteMaxSlot();
+    if (n >= 1 && n <= max) return String(n);
+    return '';
+}
+
+function paperPasteParseSection(raw) {
+    const s = String(raw || '').trim();
+    if (!s) return '';
+    const u = s.toUpperCase();
+    const sel = document.getElementById('paperPasteSection') || document.getElementById('directSectionSelect');
+    const opts = sel ? Array.from(sel.options).map(o => o.value).filter(Boolean) : [];
+    const exact = opts.find(v => v.toUpperCase() === u);
+    if (exact) return exact;
+    if (u === 'COMBINED' || u === 'ALL SECTIONS' || u === 'ELECTIVE') return opts.indexOf('ALL') !== -1 ? 'ALL' : 'ALL';
+    if (u === 'MAIN' || u === 'COMMON' || u === 'ONLY') return opts.indexOf('ONLY') !== -1 ? 'ONLY' : s;
+    if (/^SEC(TION)?\s*/i.test(s)) {
+        return paperPasteParseSection(s.replace(/^SEC(TION)?\s*/i, ''));
+    }
+    return s;
+}
+
+function paperPasteResolveSubject(raw, year, section) {
+    const t = String(raw || '').trim();
+    if (!t) return '';
+    const stream = currentDept || 'BCA';
+    const list = (typeof getSubjectsForActiveYear === 'function')
+        ? (getSubjectsForActiveYear(stream, year, section) || [])
+        : [];
+    const low = t.toLowerCase();
+    for (let i = 0; i < list.length; i++) {
+        if (String(list[i]).toLowerCase() === low) return list[i];
+    }
+    for (let i = 0; i < list.length; i++) {
+        if (typeof isSubjectMatching === 'function' && isSubjectMatching(list[i], t)) return list[i];
+    }
+    for (let i = 0; i < list.length; i++) {
+        const s = String(list[i]).toLowerCase();
+        if (s.indexOf(low) !== -1 || low.indexOf(s) !== -1) return list[i];
+    }
+    return t;
+}
+
+function paperPasteLooksLikeRolls(s) {
+    const t = String(s || '').trim();
+    if (!t) return true;
+    if (/^nil$/i.test(t) || /^none$/i.test(t) || /^all present$/i.test(t)) return true;
+    if (/year|section|subject|slot/i.test(t) && !/\d/.test(t)) return false;
+    return /^[\dA-Za-z\s,;.\-\/]+$/.test(t) && (/\d/.test(t) || /^nil$/i.test(t));
+}
+
+function paperPasteSplitHeaderParts(line) {
+    const raw = String(line || '').trim();
+    if (!raw) return [];
+    if (raw.indexOf('|') !== -1) return raw.split('|').map(p => p.trim()).filter(Boolean);
+    if (raw.indexOf('\t') !== -1) return raw.split('\t').map(p => p.trim()).filter(Boolean);
+    if (/\s+\/\s+/.test(raw)) return raw.split(/\s+\/\s+/).map(p => p.trim()).filter(Boolean);
+    if (raw.indexOf(',') !== -1) {
+        const parts = raw.split(',').map(p => p.trim()).filter(Boolean);
+        if (parts.length >= 3 && paperPasteParseYear(parts[0])) return parts;
+    }
+    return [];
+}
+
+/** Header line: Year · Section · Subject (no class date). */
+function paperPasteParseBlockHeader(line) {
+    const raw = String(line || '').trim();
+    if (!raw) return null;
+    if (paperPasteParseDate(raw) && /^\d/.test(raw)) return null;
+
+    let parts = paperPasteSplitHeaderParts(raw);
+    if (parts.length >= 3) {
+        const year = paperPasteParseYear(parts[0]) || parts[0];
+        let sectionRaw = parts[1].replace(/^SEC(TION)?\s*/i, '').trim();
+        const section = paperPasteParseSection(sectionRaw) || sectionRaw;
+        const subject = parts.slice(2).join(' ').trim();
+        if (year && section && subject) {
+            return {
+                year: paperPasteParseYear(year) || year,
+                section: section,
+                subject: subject
+            };
+        }
+    }
+
+    const year = paperPasteParseYear(raw);
+    if (!year) return null;
+    let rest = raw.replace(/first\s*year|second\s*year|third\s*year|1st\s*year|2nd\s*year|3rd\s*year|\bI\b|\bII\b|\bIII\b/ig, ' ').trim();
+    rest = rest.replace(/^[\s\-–,|\/]+/, '').trim();
+    const secMatch = rest.match(/^(?:sec(?:tion)?\s*)?([A-Za-z0-9()+\-_\/ ]{1,24}?)(?:\s{2,}|\s+)(.+)$/i);
+    if (!secMatch) return null;
+    const section = paperPasteParseSection(secMatch[1].trim()) || secMatch[1].trim();
+    const subject = String(secMatch[2] || '').trim();
+    if (!section || !subject || paperPasteParseDate(subject)) return null;
+    return { year: year, section: section, subject: subject };
+}
+
+function paperPasteReadDefaultSlot() {
+    const slotEl = document.getElementById('paperPasteSlot');
+    return (slotEl && slotEl.value) || (typeof directSlotSelect !== 'undefined' && directSlotSelect && directSlotSelect.value) || '1';
+}
+
+/**
+ * Header-block paste:
+ *   First Year | A | DBMS
+ *   2026-08-01  Slot 1  09, 17
+ *   2026-08-02  Slot 2  NIL
+ */
+function parsePaperPasteText(text) {
+    const defaultSlot = paperPasteReadDefaultSlot();
+    const lines = String(text || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const errors = [];
+    const rows = [];
+    if (!lines.length) return { rows, errors: ['Paste at least one header and one date line.'] };
+
+    let current = null;
+    let blockNo = 0;
+
+    lines.forEach((line, idx) => {
+        const lineNo = idx + 1;
+        const asHeader = !paperPasteLineHasDate(line) ? paperPasteParseBlockHeader(line) : null;
+        if (asHeader) {
+            blockNo++;
+            current = {
+                year: asHeader.year,
+                section: asHeader.section,
+                subject: paperPasteResolveSubject(asHeader.subject, asHeader.year, asHeader.section)
+            };
+            return;
+        }
+
+        const data = paperPasteParseDataLine(line, defaultSlot);
+        if (!data) {
+            errors.push('Line ' + lineNo + ': expected a header (Year | Section | Subject) or a date line (Date Slot rolls).');
+            return;
+        }
+        if (!current) {
+            errors.push('Line ' + lineNo + ': add a Year | Section | Subject header before date lines.');
+            return;
+        }
+
+        const row = {
+            date: data.date,
+            year: current.year,
+            section: current.section,
+            subject: current.subject,
+            slot: data.slot || defaultSlot,
+            rolls: data.rolls || 'NIL',
+            block: blockNo
+        };
+        row.subject = paperPasteResolveSubject(row.subject, row.year, row.section);
+
+        const missing = [];
+        if (!row.date) missing.push('date');
+        if (!row.year) missing.push('year');
+        if (!row.section) missing.push('section');
+        if (!row.subject) missing.push('subject');
+        if (!row.slot) missing.push('slot');
+        if (missing.length) errors.push('Line ' + lineNo + ' missing: ' + missing.join(', '));
+        if (typeof isAttendanceDateAllowed === 'function' && row.date && !isAttendanceDateAllowed(row.date)) {
+            errors.push('Line ' + lineNo + ': future dates are not allowed (' + row.date + ').');
+        }
+        rows.push(row);
+    });
+
+    if (!rows.length && !errors.length) {
+        errors.push('No class lines found. Use a header, then date lines under it.');
+    }
+    return { rows, errors };
+}
+
+function renderPaperPastePreview(parsed) {
+    const box = document.getElementById('paperPastePreview');
+    if (!box) return;
+    if (!parsed.rows.length) {
+        box.style.display = 'block';
+        box.innerHTML = '<div style="color:#f87171;padding:8px;">Nothing to load. Check header blocks (Year | Section | Subject) and date lines.</div>';
+        return;
+    }
+    let html = '';
+    if (parsed.errors.length) {
+        html += '<div style="color:#fbbf24;margin-bottom:6px;">' + parsed.errors.map(e => escapeHTML(e)).join('<br>') + '</div>';
+    }
+    html += '<table class="ia-marks-table" style="font-size:0.74rem;"><thead><tr><th>Date</th><th>Year</th><th>Sec</th><th>Subject</th><th>Slot</th><th>Absentees</th></tr></thead><tbody>';
+    parsed.rows.forEach(r => {
+        html += '<tr><td>' + escapeHTML(r.date) + '</td><td>' + escapeHTML(r.year) + '</td><td>' + escapeHTML(r.section) + '</td><td>' + escapeHTML(r.subject) + '</td><td>' + escapeHTML(r.slot) + '</td><td>' + escapeHTML(r.rolls || 'NIL') + '</td></tr>';
+    });
+    html += '</tbody></table>';
+    box.innerHTML = html;
+    box.style.display = 'block';
+}
+
+function openPaperPasteModal() {
+    const modal = document.getElementById('paperPasteModal');
+    if (!modal) return;
+    paperPasteCloneSelect('directSlotSelect', 'paperPasteSlot');
+    modal.classList.add('active');
+}
+
+function closePaperPasteModal() {
+    const modal = document.getElementById('paperPasteModal');
+    if (modal) modal.classList.remove('active');
+}
+
+async function loadPaperPasteToSheet() {
+    const textEl = document.getElementById('paperPasteText');
+    const parsed = parsePaperPasteText(textEl ? textEl.value : '');
+    renderPaperPastePreview(parsed);
+    const ready = parsed.rows.filter(r => r.date && r.year && r.section && r.subject && r.slot);
+    if (!ready.length) {
+        alert('Fix the header blocks and date lines (Date / Year / Section / Subject / Slot), then try again.');
+        return;
+    }
+    if (parsed.errors.length) {
+        const go = confirm(parsed.errors.join('\n') + '\n\nLoad the complete rows anyway?');
+        if (!go) return;
+    }
+
+    const loadBtn = document.getElementById('paperPasteLoadBtn');
+    const loadText = document.getElementById('paperPasteLoadBtnText');
+    const spinner = document.getElementById('paperPasteLoadSpinner');
+    if (loadBtn) loadBtn.disabled = true;
+    if (loadText) loadText.textContent = 'Loading…';
+    if (spinner) spinner.style.display = 'block';
+
+    let ok = 0, offline = 0, cancelled = 0, failed = 0;
+    const submitOpts = { skipReset: true, silent: true, skipRefresh: true };
+    for (let i = 0; i < ready.length; i++) {
+        const row = ready[i];
+        try {
+            const result = await submitData(row.date, row.rolls, row.year, row.section, row.subject, row.slot, null, null, null, submitOpts);
+            if (result && result.status === 'ok') ok++;
+            else if (result && result.status === 'offline') offline++;
+            else cancelled++;
+        } catch (e) {
+            failed++;
+        }
+    }
+
+    if (loadBtn) loadBtn.disabled = false;
+    if (loadText) loadText.textContent = 'Load to Sheet';
+    if (spinner) spinner.style.display = 'none';
+
+    if (typeof fetchTodayServerHistory === 'function') {
+        setTimeout(fetchTodayServerHistory, 800);
+    }
+    if (typeof renderHistoryList === 'function') {
+        try { renderHistoryList(); } catch (e) {}
+    }
+
+    const bits = [];
+    if (ok) bits.push(ok + ' saved');
+    if (offline) bits.push(offline + ' offline');
+    if (cancelled) bits.push(cancelled + ' skipped');
+    if (failed) bits.push(failed + ' failed');
+    if (typeof showCustomToast === 'function') {
+        showCustomToast('Paste load finished', bits.join(' · ') || 'No rows loaded');
+    } else {
+        alert('Paste load finished: ' + (bits.join(', ') || 'No rows loaded'));
+    }
+    if (ok + offline > 0) closePaperPasteModal();
+}
+
+function initPaperPasteLoader() {
+    const openBtn = document.getElementById('openPaperPasteModalBtn');
+    const closeBtn = document.getElementById('closePaperPasteModalBtn');
+    const modal = document.getElementById('paperPasteModal');
+    const previewBtn = document.getElementById('paperPastePreviewBtn');
+    const loadBtn = document.getElementById('paperPasteLoadBtn');
+    if (openBtn) openBtn.addEventListener('click', openPaperPasteModal);
+    if (closeBtn) closeBtn.addEventListener('click', closePaperPasteModal);
+    if (modal) {
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) closePaperPasteModal();
+        });
+    }
+    if (previewBtn) {
+        previewBtn.addEventListener('click', () => {
+            const textEl = document.getElementById('paperPasteText');
+            renderPaperPastePreview(parsePaperPasteText(textEl ? textEl.value : ''));
+        });
+    }
+    if (loadBtn) loadBtn.addEventListener('click', loadPaperPasteToSheet);
 }
 
 /* HOD PORTAL & WHATSAPP GENERATOR LOGIC */
@@ -5923,6 +6556,8 @@ function initShortageCalculator() {
     const subTabShortage = document.getElementById('subTabShortageCalculator');
     const dailyContainer = document.getElementById('hodDailyInformerContainer');
     const shortageContainer = document.getElementById('hodShortageContainer');
+    const marksContainer = document.getElementById('hodInternalMarksContainer');
+    const subTabMarks = document.getElementById('subTabInternalMarks');
 
     const startRollInput = document.getElementById('shortageStartRoll');
     const endRollInput = document.getElementById('shortageEndRoll');
@@ -5944,15 +6579,19 @@ function initShortageCalculator() {
         subTabDaily.addEventListener('click', () => {
             subTabDaily.classList.add('active');
             subTabShortage.classList.remove('active');
+            if (subTabMarks) subTabMarks.classList.remove('active');
             dailyContainer.style.display = 'block';
             shortageContainer.style.display = 'none';
+            if (marksContainer) marksContainer.style.display = 'none';
         });
 
         subTabShortage.addEventListener('click', () => {
             subTabShortage.classList.add('active');
             subTabDaily.classList.remove('active');
+            if (subTabMarks) subTabMarks.classList.remove('active');
             shortageContainer.style.display = 'block';
             dailyContainer.style.display = 'none';
+            if (marksContainer) marksContainer.style.display = 'none';
             lockStreamSelectToDept(deptSelect, currentDept);
             updateShortageSectionDropdown(getShortageDept());
             updateShortageSubjectDropdown();
@@ -6014,136 +6653,173 @@ function initShortageCalculator() {
         const tVal = toDateInput ? toDateInput.value : '';
 
         fetchServerHistoryForShortage(dept, period, fVal, tVal, () => {
-            const history = readAllHistory();
-            const now = new Date();
-            const currentMonthStr = getTodayISOString().substring(0, 7);
+            try {
+                const history = readAllHistory();
+                const now = new Date();
+                const currentMonthStr = getTodayISOString().substring(0, 7);
 
-            let periodLabel = 'All Time (Cumulative)';
-            if (period === 'MONTH') periodLabel = 'This Month (' + currentMonthStr + ')';
-            else if (period === 'WEEK') periodLabel = 'This Week (Last 7 Days)';
-            else if (period === 'CUSTOM') {
-                periodLabel = 'Custom (' + (fVal || 'Start') + ' to ' + (tVal || 'End') + ')';
-            }
-
-            const matchingSessions = history.filter(item => {
-                const yrMatch = isYearMatching(item.year, yrVal);
-                const secMatch = !item.section || sectionsEqualForSubject(item.section, secVal);
-                const streamMatch = isStreamMatchEvening(item.stream, dept);
-                if (!yrMatch || !secMatch || !streamMatch) return false;
-
-                if (subjFilter !== 'ALL' && !isSubjectMatching(item.subject, subjFilter)) return false;
-
-                const itemDateStr = normalizeHistoryDate(item.date) || getTodayISOString();
-                if (period === 'MONTH') {
-                    return itemDateStr.substring(0, 7) === currentMonthStr;
+                let periodLabel = 'All Time (Cumulative)';
+                if (period === 'MONTH') periodLabel = 'This Month (' + currentMonthStr + ')';
+                else if (period === 'WEEK') periodLabel = 'This Week (Last 7 Days)';
+                else if (period === 'CUSTOM') {
+                    periodLabel = 'Custom (' + (fVal || 'Start') + ' to ' + (tVal || 'End') + ')';
                 }
-                if (period === 'WEEK') {
-                    const itemTime = new Date(itemDateStr).getTime();
-                    const weekAgo = now.getTime() - (7 * 24 * 60 * 60 * 1000);
-                    return !isNaN(itemTime) && itemTime >= weekAgo;
-                }
-                if (period === 'CUSTOM') {
-                    if (fVal && itemDateStr < fVal) return false;
-                    if (tVal && itemDateStr > tVal) return false;
-                }
-                return true;
-            });
 
-            const rollObjects = parseShortageRollNumbers(sRollStr, eRollStr);
-            const totalConducted = matchingSessions.length;
-            const absenceCountMap = {};
-            const subjectStatsMap = {};
+                const matchingSessions = history.filter(item => {
+                    const yrMatch = isYearMatching(item.year, yrVal);
+                    const secMatch = !item.section || sectionsEqualForSubject(item.section, secVal);
+                    const streamMatch = isStreamMatchEvening(item.stream, dept);
+                    if (!yrMatch || !secMatch || !streamMatch) return false;
 
-            rollObjects.forEach(rObj => {
-                absenceCountMap[rObj.code] = 0;
-                subjectStatsMap[rObj.code] = {};
-            });
+                    if (subjFilter !== 'ALL' && !isSubjectMatching(item.subject, subjFilter)) return false;
 
-            matchingSessions.forEach(item => {
-                const itemSubj = (item.subject || 'General').trim();
-                const rolls = normalizeRollNumbers(item.rollNumbers);
+                    const itemDateStr = normalizeHistoryDate(item.date) || getTodayISOString();
+                    if (period === 'MONTH') {
+                        return itemDateStr.substring(0, 7) === currentMonthStr;
+                    }
+                    if (period === 'WEEK') {
+                        const itemTime = new Date(itemDateStr).getTime();
+                        const weekAgo = now.getTime() - (7 * 24 * 60 * 60 * 1000);
+                        return !isNaN(itemTime) && itemTime >= weekAgo;
+                    }
+                    if (period === 'CUSTOM') {
+                        if (fVal && itemDateStr < fVal) return false;
+                        if (tVal && itemDateStr > tVal) return false;
+                    }
+                    return true;
+                });
+
+                const rollObjects = parseShortageRollNumbers(sRollStr, eRollStr);
+                const totalConducted = matchingSessions.length;
+                const absenceCountMap = {};
+                const subjectStatsMap = {};
+                const monthHeldMap = {};
+                const monthMissedMap = {};
 
                 rollObjects.forEach(rObj => {
-                    if (!subjectStatsMap[rObj.code][itemSubj]) {
-                        subjectStatsMap[rObj.code][itemSubj] = { conducted: 0, missed: 0 };
-                    }
-                    subjectStatsMap[rObj.code][itemSubj].conducted++;
+                    absenceCountMap[rObj.code] = 0;
+                    subjectStatsMap[rObj.code] = {};
+                    monthMissedMap[rObj.code] = {};
                 });
 
-                rolls.forEach(rStr => {
-                    const cleanR = String(rStr).trim().toUpperCase();
-                    const rNum = parseInt(cleanR.replace(/\D/g, ''), 10);
+                matchingSessions.forEach(item => {
+                    const itemSubj = (item.subject || 'General').trim();
+                    const itemDateStr = normalizeHistoryDate(item.date) || getTodayISOString();
+                    const monthKey = itemDateStr.substring(0, 7);
+                    monthHeldMap[monthKey] = (monthHeldMap[monthKey] || 0) + 1;
+                    const rolls = normalizeRollNumbers(item.rollNumbers);
 
                     rollObjects.forEach(rObj => {
-                        const codeMatch = cleanR === rObj.code;
-                        const numMatch = !isNaN(rNum) && rNum === rObj.num;
-
-                        let suffixMatch = false;
-                        if (!isNaN(rNum) && rNum > 0) {
-                            const str1 = String(rNum);
-                            const str2 = String(rObj.num);
-                            if (str1.length >= 2 && str2.length >= 2) {
-                                suffixMatch = str1.endsWith(str2) || str2.endsWith(str1);
-                            }
+                        if (!subjectStatsMap[rObj.code][itemSubj]) {
+                            subjectStatsMap[rObj.code][itemSubj] = { conducted: 0, missed: 0 };
                         }
+                        subjectStatsMap[rObj.code][itemSubj].conducted++;
+                    });
 
-                        if (codeMatch || numMatch || suffixMatch) {
-                            absenceCountMap[rObj.code] = (absenceCountMap[rObj.code] || 0) + 1;
-                            if (subjectStatsMap[rObj.code][itemSubj]) {
-                                subjectStatsMap[rObj.code][itemSubj].missed++;
+                    rolls.forEach(rStr => {
+                        const cleanR = String(rStr).trim().toUpperCase();
+                        const rNum = parseInt(cleanR.replace(/\D/g, ''), 10);
+
+                        rollObjects.forEach(rObj => {
+                            const codeMatch = cleanR === rObj.code;
+                            const numMatch = !isNaN(rNum) && rNum === rObj.num;
+
+                            let suffixMatch = false;
+                            if (!isNaN(rNum) && rNum > 0) {
+                                const str1 = String(rNum);
+                                const str2 = String(rObj.num);
+                                if (str1.length >= 2 && str2.length >= 2) {
+                                    suffixMatch = str1.endsWith(str2) || str2.endsWith(str1);
+                                }
                             }
-                        }
+
+                            if (codeMatch || numMatch || suffixMatch) {
+                                absenceCountMap[rObj.code] = (absenceCountMap[rObj.code] || 0) + 1;
+                                if (subjectStatsMap[rObj.code][itemSubj]) {
+                                    subjectStatsMap[rObj.code][itemSubj].missed++;
+                                }
+                                monthMissedMap[rObj.code][monthKey] = (monthMissedMap[rObj.code][monthKey] || 0) + 1;
+                            }
+                        });
                     });
                 });
-            });
 
-            const shortageList = [];
-            rollObjects.forEach(rObj => {
-                const missed = absenceCountMap[rObj.code] || 0;
-                const attended = Math.max(0, totalConducted - missed);
-                const pct = totalConducted > 0 ? (attended / totalConducted) * 100 : 100;
-                const roundedPct = Math.round(pct * 10) / 10;
-
-                const subjBreakdown = [];
-                const sMap = subjectStatsMap[rObj.code] || {};
-                for (let sName in sMap) {
-                    const sCond = sMap[sName].conducted;
-                    const sMiss = sMap[sName].missed;
-                    const sAtt = Math.max(0, sCond - sMiss);
-                    const sPct = sCond > 0 ? Math.round((sAtt / sCond) * 1000) / 10 : 100;
-                    subjBreakdown.push({
-                        subject: sName,
-                        conducted: sCond,
-                        missed: sMiss,
-                        attended: sAtt,
-                        percent: sPct
+                const monthKeys = Object.keys(monthHeldMap).sort();
+                const monthColumns = [];
+                let runningHeld = 0;
+                monthKeys.forEach(mk => {
+                    runningHeld += monthHeldMap[mk] || 0;
+                    monthColumns.push({
+                        key: mk,
+                        label: formatShortageMonthLabel(mk),
+                        held: monthHeldMap[mk] || 0,
+                        cumHeld: runningHeld
                     });
-                }
+                });
 
-                if (roundedPct < cutoff || cutoff === 100) {
-                    shortageList.push({
-                        roll: rObj.code,
-                        total: totalConducted,
-                        missed: missed,
-                        attended: attended,
-                        percent: roundedPct,
-                        subjectBreakdown: subjBreakdown
+                const shortageList = [];
+                rollObjects.forEach(rObj => {
+                    const missed = absenceCountMap[rObj.code] || 0;
+                    const attended = Math.max(0, totalConducted - missed);
+                    const pct = totalConducted > 0 ? (attended / totalConducted) * 100 : 100;
+                    const roundedPct = Math.round(pct * 10) / 10;
+
+                    const subjBreakdown = [];
+                    const sMap = subjectStatsMap[rObj.code] || {};
+                    for (let sName in sMap) {
+                        const sCond = sMap[sName].conducted;
+                        const sMiss = sMap[sName].missed;
+                        const sAtt = Math.max(0, sCond - sMiss);
+                        const sPct = sCond > 0 ? Math.round((sAtt / sCond) * 1000) / 10 : 100;
+                        subjBreakdown.push({
+                            subject: sName,
+                            conducted: sCond,
+                            missed: sMiss,
+                            attended: sAtt,
+                            percent: sPct
+                        });
+                    }
+
+                    const monthAttendedCum = {};
+                    let runningAtt = 0;
+                    monthKeys.forEach(mk => {
+                        const held = monthHeldMap[mk] || 0;
+                        const missM = (monthMissedMap[rObj.code] || {})[mk] || 0;
+                        runningAtt += Math.max(0, held - missM);
+                        monthAttendedCum[mk] = runningAtt;
                     });
+
+                    if (roundedPct < cutoff || cutoff === 100) {
+                        shortageList.push({
+                            roll: rObj.code,
+                            total: totalConducted,
+                            missed: missed,
+                            attended: attended,
+                            percent: roundedPct,
+                            subjectBreakdown: subjBreakdown,
+                            monthAttendedCum: monthAttendedCum
+                        });
+                    }
+                });
+
+                shortageList.sort((a, b) => a.percent - b.percent);
+                renderShortageResults(container, dept, yrVal, secVal, subjFilter, sRollStr, eRollStr, totalConducted, cutoff, shortageList, periodLabel, monthColumns);
+            } catch (err) {
+                console.error('Error calculating shortage:', err);
+                if (container) {
+                    container.innerHTML = '<div style="color: #ef4444; padding: 12px; text-align: center; font-weight: 600;">An error occurred while calculating shortage. Please try again.</div>';
+                    container.style.display = 'block';
                 }
-            });
-
-            shortageList.sort((a, b) => a.percent - b.percent);
-
-            if (spinner) spinner.style.display = 'none';
-            if (calcBtnText) calcBtnText.textContent = '📊 Calculate Shortage Report';
-            calcBtn.disabled = false;
-
-            renderShortageResults(container, dept, yrVal, secVal, subjFilter, sRollStr, eRollStr, totalConducted, cutoff, shortageList, periodLabel);
+            } finally {
+                if (spinner) spinner.style.display = 'none';
+                if (calcBtnText) calcBtnText.textContent = '📊 Calculate Shortage Report';
+                calcBtn.disabled = false;
+            }
         });
     });
 }
 
-function renderShortageResults(container, dept, yearStr, sectionStr, subjectFilter, startRoll, endRoll, totalClasses, cutoff, shortageList, periodLabel) {
+function renderShortageResults(container, dept, yearStr, sectionStr, subjectFilter, startRoll, endRoll, totalClasses, cutoff, shortageList, periodLabel, monthColumns) {
     if (!container) return;
     container.style.display = 'block';
 
@@ -6151,6 +6827,15 @@ function renderShortageResults(container, dept, yearStr, sectionStr, subjectFilt
     const count = shortageList.length;
     const subjHeader = subjectFilter === 'ALL' ? 'All Subjects (Overall)' : subjectFilter;
     const deptLabel = (DEPT_CONFIG[dept] && DEPT_CONFIG[dept].code) || dept || 'BCA';
+    const sheetMeta = {
+        yearStr: yearStr,
+        sectionStr: sectionStr,
+        subjectFilter: subjectFilter,
+        cutoff: cutoff,
+        periodLabel: pLabel,
+        stream: dept || currentDept || 'BCA',
+        monthColumns: Array.isArray(monthColumns) ? monthColumns : []
+    };
 
     let html = `
     <div style="background: var(--card-bg, #1e293b); border: 1px solid var(--border-color, #334155); border-radius: 10px; padding: 14px; margin-top: 10px;">
@@ -6179,9 +6864,17 @@ function renderShortageResults(container, dept, yearStr, sectionStr, subjectFilt
         </div>`;
     } else {
         html += `
-        <button type="button" class="btn-whatsapp-global" id="shortageShareWaBtn" style="margin-bottom: 12px; width: 100%; font-weight: 700;">
-            📱 Share Shortage List (${count} Students) to WhatsApp
-        </button>
+        <div class="shortage-export-row">
+            <button type="button" class="btn-whatsapp-global" id="shortageShareWaBtn" style="margin-bottom: 0; width: 100%; font-weight: 700;">
+                📱 Share Shortage List (${count} Students) to WhatsApp
+            </button>
+            <button type="button" class="btn-secondary shortage-export-btn" id="shortagePrintBtn" style="width: 100%; font-weight: 700; padding: 10px 14px;">
+                🖨️ Print Official Form
+            </button>
+            <button type="button" class="btn-secondary shortage-export-btn" id="shortageExcelBtn" style="width: 100%; font-weight: 700; padding: 10px 14px; background: rgba(16, 185, 129, 0.14); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.35);">
+                📊 Download Excel
+            </button>
+        </div>
         <div style="display: flex; flex-direction: column; gap: 10px; max-height: 400px; overflow-y: auto;">`;
 
         shortageList.forEach(item => {
@@ -6243,6 +6936,19 @@ function renderShortageResults(container, dept, yearStr, sectionStr, subjectFilt
             window.open(waUrl, '_blank');
         });
     }
+
+    const printBtn = document.getElementById('shortagePrintBtn');
+    if (printBtn) {
+        printBtn.addEventListener('click', () => {
+            printOfficialShortageSheet(sheetMeta, shortageList);
+        });
+    }
+    const excelBtn = document.getElementById('shortageExcelBtn');
+    if (excelBtn) {
+        excelBtn.addEventListener('click', () => {
+            downloadOfficialShortageExcel(sheetMeta, shortageList);
+        });
+    }
 }
 
 function buildShortageWhatsAppText(deptLabel, yearStr, sectionStr, subjectFilter, startRoll, endRoll, totalClasses, cutoff, shortageList, periodLabel) {
@@ -6272,3 +6978,1180 @@ function buildShortageWhatsAppText(deptLabel, yearStr, sectionStr, subjectFilter
     }
     return msg;
 }
+
+const MGMEC_OFFICIAL_COLLEGE_NAME = 'MAHATMA GANDHI MEMORIAL EVENING COLLEGE, UDUPI-2';
+
+function formatShortageMonthLabel(ym) {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const m = parseInt(String(ym || '').substring(5, 7), 10);
+    return months[m - 1] || '';
+}
+
+function shortageStreamShortLabel(stream) {
+    const s = String(stream || (typeof currentDept !== 'undefined' ? currentDept : '') || 'BCA').toUpperCase();
+    if (s === 'BCOM' || s === 'BCM') return 'B.Com';
+    if (s === 'BBA') return 'BBA';
+    return 'BCA';
+}
+
+function shortageClassLabel(yearStr, sectionStr, stream) {
+    const roman = { 'First Year': 'I', 'Second Year': 'II', 'Third Year': 'III' };
+    const r = roman[yearStr] || yearStr || '';
+    const streamLabel = shortageStreamShortLabel(stream);
+    let sec = sectionStr || '';
+    if (!sec || sec === 'ALL') sec = 'Combined';
+    else if (sec === 'ONLY') sec = 'Main';
+    return r + ' ' + streamLabel + ' ' + sec;
+}
+
+function shortageSheetSubjectLabel(subjectFilter) {
+    if (!subjectFilter || subjectFilter === 'ALL') return 'ALL SUBJECTS';
+    return subjectFilter;
+}
+
+function shortageAcademicYearParts() {
+    const iso = typeof getTodayISOString === 'function' ? getTodayISOString() : '';
+    const y = parseInt((iso || '').substring(0, 4), 10) || new Date().getFullYear();
+    const m = parseInt((iso || '').substring(5, 7), 10) || (new Date().getMonth() + 1);
+    const start = m >= 6 ? y : y - 1;
+    return { startYY: String(start).slice(-2), endYY: String(start + 1).slice(-2) };
+}
+
+function padShortageMonthColumns(monthColumns) {
+    const cols = Array.isArray(monthColumns) ? monthColumns.slice() : [];
+    while (cols.length < 8) {
+        cols.push({ key: '', label: '', held: '', cumHeld: '' });
+    }
+    return cols;
+}
+
+function sortShortageByRoll(list) {
+    return (list || []).slice().sort((a, b) => {
+        const na = parseInt(String(a.roll || '').replace(/\D/g, ''), 10);
+        const nb = parseInt(String(b.roll || '').replace(/\D/g, ''), 10);
+        if (!isNaN(na) && !isNaN(nb) && na !== nb) return na - nb;
+        return String(a.roll || '').localeCompare(String(b.roll || ''));
+    });
+}
+
+function shortageRemarksText(item, cutoff) {
+    if (!item) return '';
+    const limit = (cutoff === 100) ? 75 : cutoff;
+    if (item.percent < limit) return item.percent + '% Shortage';
+    return '';
+}
+
+function buildOfficialAttendanceSheetTable(meta, shortageList) {
+    const cols = padShortageMonthColumns(meta && meta.monthColumns);
+    const students = sortShortageByRoll(shortageList);
+    const ay = shortageAcademicYearParts();
+    const classLabel = escapeHTML(shortageClassLabel(meta.yearStr, meta.sectionStr, meta.stream));
+    const subj = escapeHTML(shortageSheetSubjectLabel(meta.subjectFilter));
+    const cutoff = meta.cutoff;
+    const colCount = cols.length;
+    const footerSpan = colCount;
+
+    let monthHeads = '';
+    let heldCells = '';
+    cols.forEach(col => {
+        monthHeads += `<th style="border:1px solid #000;padding:4px 6px;font-size:12px;font-weight:700;width:56px;">${escapeHTML(col.label || '')}</th>`;
+        const heldVal = col.key ? col.cumHeld : '';
+        heldCells += `<td style="border:1px solid #000;padding:4px 6px;text-align:center;font-size:12px;">${heldVal === '' ? '' : heldVal}</td>`;
+    });
+
+    let studentRows = '';
+    students.forEach(item => {
+        let attCells = '';
+        cols.forEach(col => {
+            let val = '';
+            if (col.key && item.monthAttendedCum && item.monthAttendedCum[col.key] != null) {
+                val = item.monthAttendedCum[col.key];
+            }
+            attCells += `<td style="border:1px solid #000;padding:3px 6px;text-align:center;font-size:12px;">${val}</td>`;
+        });
+        const remarks = escapeHTML(shortageRemarksText(item, cutoff));
+        studentRows += `<tr>
+            <td style="border:1px solid #000;padding:3px 6px;font-size:12px;font-weight:700;">${escapeHTML(item.roll || '')}</td>
+            ${attCells}
+            <td style="border:1px solid #000;padding:3px 6px;font-size:11px;">${remarks}</td>
+        </tr>`;
+    });
+
+    return `
+    <table style="width:100%;border-collapse:collapse;border:1px solid #000;font-family:'Times New Roman',Times,serif;color:#000;background:#fff;">
+        <tr>
+            <td colspan="${colCount + 2}" style="border:1px solid #000;padding:8px 6px 2px;text-align:center;font-size:16px;font-weight:800;letter-spacing:0.3px;">
+                ${escapeHTML(MGMEC_OFFICIAL_COLLEGE_NAME)}
+            </td>
+        </tr>
+        <tr>
+            <td colspan="${colCount + 2}" style="border:1px solid #000;padding:2px 6px 8px;text-align:center;font-size:14px;font-weight:700;">
+                Attendance Records for the year 20${ay.startYY} - 20${ay.endYY}
+            </td>
+        </tr>
+        <tr>
+            <td colspan="${Math.ceil((colCount + 2) / 2)}" style="border:1px solid #000;padding:6px;font-size:13px;font-weight:700;">
+                CLASS: ${classLabel}
+            </td>
+            <td colspan="${Math.floor((colCount + 2) / 2)}" style="border:1px solid #000;padding:6px;font-size:13px;font-weight:700;">
+                SUBJECT: ${subj}
+            </td>
+        </tr>
+        <tr>
+            <td colspan="${colCount + 2}" style="border:1px solid #000;padding:4px 6px;font-size:11px;font-style:italic;">
+                Note: Number of Lectures held &amp; Number of Lectures attended should be prepared in Cumulative Order
+            </td>
+        </tr>
+        <tr>
+            <th style="border:1px solid #000;padding:4px 6px;font-size:12px;text-align:left;">Month</th>
+            ${monthHeads}
+            <th rowspan="2" style="border:1px solid #000;padding:4px 6px;font-size:12px;width:90px;">Remarks</th>
+        </tr>
+        <tr>
+            <th style="border:1px solid #000;padding:4px 6px;font-size:11px;text-align:left;">No. of Lects. held</th>
+            ${heldCells}
+        </tr>
+        <tr>
+            <th style="border:1px solid #000;padding:4px 6px;font-size:12px;">Roll Nos.</th>
+            <th colspan="${colCount}" style="border:1px solid #000;padding:4px 6px;font-size:12px;">Number of Lectures attended</th>
+            <th style="border:1px solid #000;"></th>
+        </tr>
+        ${studentRows}
+        <tr>
+            <td colspan="2" style="border:1px solid #000;padding:18px 6px 6px;font-size:12px;vertical-align:bottom;">Initial of the Faculty</td>
+            <td colspan="${footerSpan}" style="border:1px solid #000;"></td>
+        </tr>
+        <tr>
+            <td colspan="2" style="border:1px solid #000;padding:18px 6px 6px;font-size:12px;vertical-align:bottom;">Name of the HOD</td>
+            <td colspan="${footerSpan}" style="border:1px solid #000;padding:18px 6px 6px;font-size:12px;text-align:right;vertical-align:bottom;">Signature of the HOD</td>
+        </tr>
+    </table>`;
+}
+
+function buildOfficialAttendanceSheetDocument(meta, shortageList) {
+    const table = buildOfficialAttendanceSheetTable(meta, shortageList);
+    return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>MGM Evening College Attendance Records</title>
+<style>
+    body { font-family: 'Times New Roman', Times, serif; color: #000; background: #fff; margin: 16px; }
+    .no-print { margin-bottom: 12px; }
+    .no-print button { padding: 8px 14px; font-weight: 700; cursor: pointer; }
+    @media print {
+        .no-print { display: none !important; }
+        body { margin: 8mm; }
+        @page { size: A4 portrait; margin: 10mm; }
+    }
+</style>
+</head>
+<body>
+    <div class="no-print">
+        <button type="button" onclick="window.print()">Print</button>
+    </div>
+    ${table}
+</body>
+</html>`;
+}
+
+function printOfficialShortageSheet(meta, shortageList) {
+    const html = buildOfficialAttendanceSheetDocument(meta, shortageList);
+    const w = window.open('', '_blank');
+    if (!w) {
+        alert('Please allow pop-ups to print the official attendance form.');
+        return;
+    }
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    setTimeout(function () {
+        try { w.print(); } catch (e) {}
+    }, 400);
+}
+
+function downloadOfficialShortageExcel(meta, shortageList) {
+    const table = buildOfficialAttendanceSheetTable(meta, shortageList);
+    const html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8"></head><body>' + table + '</body></html>';
+    const blob = new Blob(['\ufeff' + html], { type: 'application/vnd.ms-excel' });
+    const a = document.createElement('a');
+    const classPart = shortageClassLabel(meta.yearStr, meta.sectionStr, meta.stream).replace(/\s+/g, '_');
+    const subjPart = shortageSheetSubjectLabel(meta.subjectFilter).replace(/[^\w]+/g, '_');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'MGM_Evening_' + classPart + '_' + subjPart + '_Attendance.xls';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1500);
+}
+
+// ==========================================
+// INTERNAL MARKS (2 tests, max 10) + ACADEMIC PERFORMANCE FINAL REPORT
+// Attendance / shortage above is unchanged. Works for logged-in stream (BCA/BCOM/BBA).
+// ==========================================
+
+const IA_MAX_MARKS = 10;
+const IA_MARKS_STORE_KEY = 'mgmec_internal_marks';
+const IA_ROSTER_KEY = 'mgmec_student_roster';
+let currentIaRollObjects = [];
+
+function iaCurrentStream() {
+    return String((typeof currentDept !== 'undefined' && currentDept) ? currentDept : 'BCA').toUpperCase();
+}
+
+function readInternalMarksStore() {
+    try {
+        const raw = localStorage.getItem(IA_MARKS_STORE_KEY);
+        const obj = raw ? JSON.parse(raw) : {};
+        return obj && typeof obj === 'object' ? obj : {};
+    } catch (e) { return {}; }
+}
+
+function writeInternalMarksStore(store) {
+    try { localStorage.setItem(IA_MARKS_STORE_KEY, JSON.stringify(store || {})); } catch (e) {}
+}
+
+function iaRecordKey(yearStr, sectionStr, subject, roll) {
+    return [iaCurrentStream(), yearStr || '', sectionStr || '', String(subject || '').trim().toLowerCase(), String(roll || '').trim().toUpperCase()].join('|');
+}
+
+function clampIaMark(val) {
+    if (val === '' || val == null) return '';
+    const s = String(val).trim();
+    if (!s) return '';
+    if (/^ab(s(ent)?)?$/i.test(s)) return 'AB';
+    const n = parseFloat(s);
+    if (isNaN(n)) return '';
+    if (n < 0) return 0;
+    if (n > IA_MAX_MARKS) return IA_MAX_MARKS;
+    return Math.round(n * 10) / 10;
+}
+
+function iaMarkIsNumeric(val) {
+    const v = clampIaMark(val);
+    return v !== '' && v !== 'AB' && !isNaN(parseFloat(v));
+}
+
+function iaInternalTotal(ia1, ia2) {
+    const a = clampIaMark(ia1);
+    const b = clampIaMark(ia2);
+    const n1 = iaMarkIsNumeric(a) ? parseFloat(a) : null;
+    const n2 = iaMarkIsNumeric(b) ? parseFloat(b) : null;
+    if (n1 == null && n2 == null) return '';
+    return (n1 || 0) + (n2 || 0);
+}
+
+function readStudentRoster() {
+    try {
+        const raw = localStorage.getItem(IA_ROSTER_KEY);
+        const obj = raw ? JSON.parse(raw) : {};
+        return obj && typeof obj === 'object' ? obj : {};
+    } catch (e) { return {}; }
+}
+
+function writeStudentRoster(store) {
+    try { localStorage.setItem(IA_ROSTER_KEY, JSON.stringify(store || {})); } catch (e) {}
+}
+
+function iaRosterKey(yearStr, sectionStr, roll) {
+    return [iaCurrentStream(), yearStr || '', sectionStr || '', String(roll || '').trim().toUpperCase()].join('|');
+}
+
+function getStudentRosterEntry(yearStr, sectionStr, roll) {
+    const store = readStudentRoster();
+    return store[iaRosterKey(yearStr, sectionStr, roll)] || { name: '', regNo: '' };
+}
+
+function setStudentRosterEntry(yearStr, sectionStr, roll, name, regNo) {
+    const store = readStudentRoster();
+    const prev = store[iaRosterKey(yearStr, sectionStr, roll)] || {};
+    store[iaRosterKey(yearStr, sectionStr, roll)] = {
+        name: name != null ? String(name).trim() : (prev.name || ''),
+        regNo: regNo != null ? String(regNo).trim() : (prev.regNo || '')
+    };
+    writeStudentRoster(store);
+}
+
+function parseMarksRollNumbers(sRollStr, eRollStr) {
+    return parseShortageRollNumbers(sRollStr, eRollStr);
+}
+
+function defaultIaSemester(yearStr) {
+    const iso = typeof getTodayISOString === 'function' ? getTodayISOString() : '';
+    const m = parseInt((iso || '').substring(5, 7), 10) || (new Date().getMonth() + 1);
+    const odd = m >= 6 && m <= 11;
+    if (yearStr === 'First Year') return odd ? 'I' : 'II';
+    if (yearStr === 'Second Year') return odd ? 'III' : 'IV';
+    return odd ? 'V' : 'VI';
+}
+
+function updateIaSectionDropdown() {
+    const secSelect = document.getElementById('iaSectionSelect');
+    if (!secSelect) return;
+    const dept = iaCurrentStream();
+    const config = DEPT_CONFIG[dept] || DEPT_CONFIG.BCA;
+    const prev = secSelect.value;
+    if (config.hasSections) {
+        secSelect.innerHTML =
+            '<option value="A">Section A</option>' +
+            '<option value="B">Section B</option>' +
+            '<option value="ALL">Combined (Sec A &amp; B / Electives)</option>';
+    } else {
+        secSelect.innerHTML =
+            '<option value="ONLY">Main Class</option>' +
+            '<option value="ALL">Combined (Electives)</option>';
+    }
+    if (prev && Array.from(secSelect.options).some(o => o.value === prev)) {
+        secSelect.value = prev;
+    }
+}
+
+function updateIaSubjectDropdown() {
+    const yrSelect = document.getElementById('iaYearSelect');
+    const secSelect = document.getElementById('iaSectionSelect');
+    const subjSelect = document.getElementById('iaSubjectSelect');
+    if (!subjSelect) return;
+    const yr = yrSelect ? yrSelect.value : 'First Year';
+    const sec = secSelect ? secSelect.value : 'A';
+    const stream = iaCurrentStream();
+    const subjects = getSubjectsForActiveYear(stream, yr, sec) || [];
+    const history = readAllHistory();
+    const historySubjs = new Set();
+    history.forEach(item => {
+        if (!item.subject) return;
+        if (item.stream && !isStreamMatchEvening(item.stream, stream)) return;
+        if (item.year && !isYearMatching(item.year, yr)) return;
+        if (item.section && typeof sectionsEqualForSubject === 'function' && !sectionsEqualForSubject(item.section, sec)) return;
+        historySubjs.add(item.subject.trim());
+    });
+    const store = readInternalMarksStore();
+    const prefix = stream + '|' + yr + '|' + sec + '|';
+    Object.keys(store).forEach(k => {
+        if (k.indexOf(prefix) !== 0) return;
+        const parts = k.split('|');
+        if (parts[3]) historySubjs.add(parts[3]);
+    });
+    const allSubjs = Array.from(new Set([].concat(subjects, Array.from(historySubjs)))).filter(Boolean).sort();
+    const prev = subjSelect.value;
+    let html = '<option value="">Select subject</option>';
+    allSubjs.forEach(sub => {
+        html += '<option value="' + escapeHTML(sub) + '">' + escapeHTML(sub) + '</option>';
+    });
+    subjSelect.innerHTML = html;
+    if (prev && allSubjs.indexOf(prev) !== -1) subjSelect.value = prev;
+}
+
+function monthBelongsToSemester(ym, sem) {
+    const mo = parseInt(String(ym || '').substring(5, 7), 10);
+    if (!mo) return false;
+    const odd = (sem === 'I' || sem === 'III' || sem === 'V');
+    if (odd) return mo >= 6 && mo <= 11;
+    return mo === 12 || mo <= 5;
+}
+
+function iaSubjectKeyPart(subject) {
+    return String(subject || '').trim().toLowerCase();
+}
+
+function iaSubjectsLooselyEqual(a, b) {
+    const s1 = iaSubjectKeyPart(a);
+    const s2 = iaSubjectKeyPart(b);
+    if (!s1 || !s2) return false;
+    if (s1 === s2) return true;
+    if (typeof extractSubjNameAndSection === 'function') {
+        const b1 = extractSubjNameAndSection(a).name.trim().toLowerCase();
+        const b2 = extractSubjNameAndSection(b).name.trim().toLowerCase();
+        if (b1 && b2 && b1 === b2) return true;
+    }
+    return false;
+}
+
+function getIaMark(yearStr, sectionStr, subject, roll) {
+    const store = readInternalMarksStore();
+    const exact = store[iaRecordKey(yearStr, sectionStr, subject, roll)];
+    if (exact) return exact;
+    if (sectionStr && sectionStr !== 'ALL') {
+        const allSec = store[iaRecordKey(yearStr, 'ALL', subject, roll)];
+        if (allSec) return allSec;
+    }
+    const stream = iaCurrentStream();
+    const rollU = String(roll || '').trim().toUpperCase();
+    const year = yearStr || '';
+    let found = null;
+    Object.keys(store).forEach(function (k) {
+        if (found) return;
+        const parts = k.split('|');
+        if (parts.length < 5) return;
+        if (parts[0] !== stream || parts[1] !== year || parts[4] !== rollU) return;
+        const keySec = parts[2] || '';
+        const keySub = parts[3] || '';
+        const secOk = keySec === (sectionStr || '') ||
+            keySec === 'ALL' ||
+            (typeof sectionsEqualForSubject === 'function' && sectionsEqualForSubject(keySec, sectionStr));
+        if (!secOk) return;
+        if (iaSubjectsLooselyEqual(keySub, subject)) found = store[k];
+    });
+    return found || { ia1: '', ia2: '' };
+}
+
+function upsertIaMark(yearStr, sectionStr, subject, roll, ia1, ia2, name, regNo) {
+    const store = readInternalMarksStore();
+    store[iaRecordKey(yearStr, sectionStr, subject, roll)] = {
+        ia1: clampIaMark(ia1),
+        ia2: clampIaMark(ia2),
+        updated: new Date().toISOString()
+    };
+    writeInternalMarksStore(store);
+    if (name != null || regNo != null) setStudentRosterEntry(yearStr, sectionStr, roll, name, regNo);
+}
+
+function renderIaMarksGrid(yearStr, sectionStr, subject, rollObjects) {
+    const tbody = document.getElementById('iaMarksTableBody');
+    const card = document.getElementById('iaMarksEntryCard');
+    const heading = document.getElementById('iaEntryHeading');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    rollObjects.forEach(rObj => {
+        const rec = getIaMark(yearStr, sectionStr, subject, rObj.code);
+        const roster = getStudentRosterEntry(yearStr, sectionStr, rObj.code);
+        const ia1 = rec.ia1 === '' || rec.ia1 == null ? '' : rec.ia1;
+        const ia2 = rec.ia2 === '' || rec.ia2 == null ? '' : rec.ia2;
+        const total = iaInternalTotal(ia1, ia2);
+        const tr = document.createElement('tr');
+        tr.innerHTML =
+            '<td style="font-weight:700;">' + escapeHTML(rObj.code) + '</td>' +
+            '<td><input type="text" class="form-input ia-meta-input" data-roll="' + escapeHTML(rObj.code) + '" data-which="regNo" placeholder="Reg. No" value="' + escapeHTML(roster.regNo || '') + '" /></td>' +
+            '<td><input type="text" class="form-input ia-meta-input" data-roll="' + escapeHTML(rObj.code) + '" data-which="name" placeholder="Name" value="' + escapeHTML(roster.name || '') + '" /></td>' +
+            '<td><input type="text" inputmode="decimal" class="form-input ia-mark-input" data-roll="' + escapeHTML(rObj.code) + '" data-which="ia1" placeholder="0–10 / AB" value="' + escapeHTML(String(ia1)) + '" /></td>' +
+            '<td><input type="text" inputmode="decimal" class="form-input ia-mark-input" data-roll="' + escapeHTML(rObj.code) + '" data-which="ia2" placeholder="0–10 / AB" value="' + escapeHTML(String(ia2)) + '" /></td>' +
+            '<td class="ia-total-cell" data-roll="' + escapeHTML(rObj.code) + '">' + (total === '' ? '' : total) + '</td>';
+        tbody.appendChild(tr);
+    });
+    tbody.querySelectorAll('.ia-mark-input').forEach(inp => {
+        inp.addEventListener('input', () => {
+            const roll = inp.getAttribute('data-roll');
+            let a = '', b = '';
+            tbody.querySelectorAll('.ia-mark-input[data-roll="' + roll + '"]').forEach(el => {
+                if (el.getAttribute('data-which') === 'ia1') a = el.value;
+                if (el.getAttribute('data-which') === 'ia2') b = el.value;
+            });
+            const cell = tbody.querySelector('.ia-total-cell[data-roll="' + roll + '"]');
+            if (cell) {
+                const tot = iaInternalTotal(a, b);
+                cell.textContent = tot === '' ? '' : tot;
+            }
+        });
+    });
+    if (card) card.style.display = 'block';
+    if (heading) heading.textContent = iaCurrentStream() + ' · ' + subject + ' — ' + yearStr + ' ' + sectionStr + ' (' + rollObjects.length + ')';
+}
+
+function collectIaGridRows() {
+    const tbody = document.getElementById('iaMarksTableBody');
+    if (!tbody) return [];
+    const byRoll = {};
+    tbody.querySelectorAll('.ia-mark-input, .ia-meta-input').forEach(inp => {
+        const roll = inp.getAttribute('data-roll');
+        if (!byRoll[roll]) byRoll[roll] = { roll: roll, ia1: '', ia2: '', name: '', regNo: '' };
+        byRoll[roll][inp.getAttribute('data-which')] = inp.value;
+    });
+    return Object.keys(byRoll).map(k => byRoll[k]);
+}
+
+function iaLooksLikeRegNo(s) {
+    const t = String(s || '').trim();
+    if (!t) return false;
+    if (/^u\d/i.test(t) || /mg\d/i.test(t)) return true;
+    return /^[A-Za-z0-9\/-]{8,}$/.test(t) && /\d/.test(t) && /[A-Za-z]/.test(t);
+}
+
+function iaLooksLikeHeader(parts) {
+    const joined = parts.join(' ').toLowerCase();
+    return joined.indexOf('roll') !== -1 || joined.indexOf('name') !== -1 || joined.indexOf('reg') !== -1;
+}
+
+function iaFindRollObject(token, rollObjects) {
+    const clean = String(token || '').trim().toUpperCase().replace(/\s+/g, '');
+    if (!clean || !rollObjects) return null;
+    const num = parseInt(clean.replace(/\D/g, ''), 10);
+    for (let i = 0; i < rollObjects.length; i++) {
+        const rObj = rollObjects[i];
+        if (rObj.code === clean) return rObj;
+        if (!isNaN(num) && rObj.num === num) return rObj;
+        if (!isNaN(num) && num > 0) {
+            const str1 = String(num);
+            const str2 = String(rObj.num);
+            if (str1.length >= 2 && str2.length >= 2 && (str1.endsWith(str2) || str2.endsWith(str1))) return rObj;
+        }
+    }
+    return null;
+}
+
+function parseIaClassListText(text) {
+    const rows = [];
+    String(text || '').split(/\r?\n/).forEach(function (line) {
+        line = line.trim();
+        if (!line) return;
+        const parts = (line.indexOf('\t') !== -1 ? line.split('\t') : line.split(',')).map(function (p) { return p.trim(); }).filter(Boolean);
+        if (parts.length < 2 || iaLooksLikeHeader(parts)) return;
+        let roll = '', regNo = '', name = '';
+        const firstNum = parseInt(String(parts[0]).replace(/\D/g, ''), 10);
+        const firstIsSerial = parts.length >= 3 && !isNaN(firstNum) && firstNum > 0 && firstNum <= 200 && String(parts[0]).replace(/\D/g, '').length <= 3;
+        if (firstIsSerial) {
+            roll = parts[1] || '';
+            if (parts.length >= 4) { regNo = parts[2] || ''; name = parts.slice(3).join(' '); }
+            else if (parts.length === 3) { if (iaLooksLikeRegNo(parts[2])) regNo = parts[2]; else name = parts[2]; }
+        } else {
+            roll = parts[0];
+            if (parts.length === 2) name = parts[1];
+            else if (iaLooksLikeRegNo(parts[1])) { regNo = parts[1]; name = parts.slice(2).join(' '); }
+            else name = parts.slice(1).join(' ');
+        }
+        if (roll) rows.push({ roll: roll, regNo: regNo, name: name });
+    });
+    return rows;
+}
+
+function applyIaClassListToGrid(text, yearStr, sectionStr, rollObjects) {
+    const parsed = parseIaClassListText(text);
+    if (!parsed.length) return 0;
+    const tbody = document.getElementById('iaMarksTableBody');
+    let filled = 0;
+    parsed.forEach(function (row) {
+        const rObj = iaFindRollObject(row.roll, rollObjects);
+        const rollCode = rObj ? rObj.code : String(row.roll || '').trim().toUpperCase();
+        if (!rollCode) return;
+        setStudentRosterEntry(yearStr, sectionStr, rollCode, row.name, row.regNo);
+        if (tbody) {
+            const nameInp = tbody.querySelector('.ia-meta-input[data-roll="' + rollCode + '"][data-which="name"]');
+            const regInp = tbody.querySelector('.ia-meta-input[data-roll="' + rollCode + '"][data-which="regNo"]');
+            if (nameInp && row.name) nameInp.value = row.name;
+            if (regInp && row.regNo) regInp.value = row.regNo;
+            if (nameInp || regInp) filled++;
+        } else filled++;
+    });
+    return filled;
+}
+
+function saveIaMarksFromGrid(yearStr, sectionStr, subject) {
+    const rows = collectIaGridRows();
+    rows.forEach(row => {
+        upsertIaMark(yearStr, sectionStr, subject, row.roll, row.ia1, row.ia2, row.name, row.regNo);
+    });
+    const stream = iaCurrentStream();
+    const targetUrl = getWebhookUrl(stream);
+    if (targetUrl && typeof postWithRetry === 'function') {
+        const payload = withAuth({
+            action: 'save_internal_marks',
+            stream: stream,
+            year: yearStr,
+            section: sectionStr,
+            subject: subject,
+            max: IA_MAX_MARKS,
+            marks: rows.map(r => ({
+                roll: r.roll,
+                ia1: clampIaMark(r.ia1),
+                ia2: clampIaMark(r.ia2),
+                name: r.name || '',
+                regNo: r.regNo || ''
+            }))
+        });
+        postWithRetry(targetUrl, payload).catch(function () {});
+    }
+    return rows.length;
+}
+
+function fetchIaMarksFromSheet(yearStr, sectionStr, subject, callback) {
+    const stream = iaCurrentStream();
+    const targetUrl = getWebhookUrl(stream);
+    if (!targetUrl) { if (callback) callback(); return; }
+    const cbName = 'mgmec_ia_marks_cb_' + Date.now() + '_' + Math.floor(Math.random() * 1e6);
+    let done = false;
+    const timeout = setTimeout(function () { if (done) return; done = true; if (callback) callback(); }, 12000);
+    window[cbName] = function (res) {
+        if (done) return;
+        done = true;
+        clearTimeout(timeout);
+        try { delete window[cbName]; } catch (e) {}
+        if (res && (res.result === 'success' || res.status === 'ok') && Array.isArray(res.marks)) {
+            const store = readInternalMarksStore();
+            res.marks.forEach(function (m) {
+                const roll = String(m.roll || '').trim().toUpperCase();
+                const subj = m.subject || subject;
+                if (!roll) return;
+                store[iaRecordKey(yearStr, sectionStr, subj, roll)] = {
+                    ia1: clampIaMark(m.ia1),
+                    ia2: clampIaMark(m.ia2),
+                    updated: m.updated || new Date().toISOString()
+                };
+                if (m.name || m.regNo) setStudentRosterEntry(yearStr, sectionStr, roll, m.name || '', m.regNo || '');
+            });
+            writeInternalMarksStore(store);
+        }
+        if (callback) callback();
+    };
+    const params = new URLSearchParams({
+        action: 'get_internal_marks',
+        stream: stream,
+        year: yearStr,
+        section: sectionStr,
+        subject: subject,
+        callback: cbName
+    });
+    appendAuthToParams(params);
+    const scriptEl = document.createElement('script');
+    scriptEl.src = targetUrl + (targetUrl.indexOf('?') >= 0 ? '&' : '?') + params.toString();
+    scriptEl.onerror = function () {
+        if (done) return;
+        done = true;
+        clearTimeout(timeout);
+        try { delete window[cbName]; } catch (e) {}
+        if (callback) callback();
+    };
+    document.body.appendChild(scriptEl);
+}
+
+function iaAcademicYearLabel() {
+    const ay = shortageAcademicYearParts();
+    return '20' + ay.startYY + '-' + ay.endYY;
+}
+
+function buildOfficialIaMarksTable(yearStr, sectionStr, subject, rollObjects, semester) {
+    const sem = semester || defaultIaSemester(yearStr);
+    const streamLab = shortageStreamShortLabel(iaCurrentStream());
+    let secLab = sectionStr || '';
+    if (!secLab || secLab === 'ALL') secLab = 'Combined';
+    else if (secLab === 'ONLY') secLab = 'Main';
+    const title = 'Internal Marks ' + iaAcademicYearLabel() + ', ' + sem + ' Sem. ' + streamLab + ' (' + secLab + ')';
+    const td = 'border:1px solid #000;padding:4px 6px;font-size:12px;';
+    let rows = '';
+    rollObjects.forEach(function (rObj, idx) {
+        const rec = getIaMark(yearStr, sectionStr, subject, rObj.code);
+        const roster = getStudentRosterEntry(yearStr, sectionStr, rObj.code);
+        const ia1 = clampIaMark(rec.ia1);
+        const ia2 = clampIaMark(rec.ia2);
+        const internal = iaInternalTotal(ia1, ia2);
+        rows += '<tr>' +
+            '<td style="' + td + 'text-align:center;">' + (idx + 1) + '</td>' +
+            '<td style="' + td + 'text-align:center;font-weight:700;">' + escapeHTML(rObj.code) + '</td>' +
+            '<td style="' + td + '">' + escapeHTML(roster.regNo || '') + '</td>' +
+            '<td style="' + td + 'text-align:left;">' + escapeHTML(roster.name || '') + '</td>' +
+            '<td style="' + td + 'text-align:center;font-weight:700;">' + escapeHTML(String(ia1)) + '</td>' +
+            '<td style="' + td + 'text-align:center;font-weight:700;">' + escapeHTML(String(ia2)) + '</td>' +
+            '<td style="' + td + '"></td><td style="' + td + '"></td>' +
+            '<td style="' + td + 'text-align:center;font-weight:700;">' + (internal === '' ? '' : internal) + '</td></tr>';
+    });
+    return '<div style="font-family:\'Times New Roman\',Times,serif;color:#000;background:#fff;">' +
+        '<table style="width:100%;border-collapse:collapse;border:1px solid #000;">' +
+        '<tr><td colspan="9" style="' + td + 'font-size:15px;font-weight:800;text-align:center;">' + escapeHTML(MGMEC_OFFICIAL_COLLEGE_NAME) + '</td></tr>' +
+        '<tr><td colspan="6" style="' + td + 'font-size:14px;font-weight:800;">' + escapeHTML(title) + '</td>' +
+        '<td colspan="3" style="' + td + 'font-size:13px;font-weight:700;text-align:right;">Subject: ' + escapeHTML(subject || '') + '</td></tr>' +
+        '<tr><th rowspan="2" style="' + td + '">Sl.<br>No</th><th rowspan="2" style="' + td + '">Roll<br>No.</th><th rowspan="2" style="' + td + '">REG.No.</th><th rowspan="2" style="' + td + 'text-align:left;">Name</th>' +
+        '<th colspan="2" style="' + td + '">INT MARKS OUT OF</th><th style="' + td + '"></th><th style="' + td + '"></th><th rowspan="2" style="' + td + '">Internal</th></tr>' +
+        '<tr><th style="' + td + '">10<br>I TEST</th><th style="' + td + '">10<br>II TEST</th><th style="' + td + '"></th><th style="' + td + '"></th></tr>' +
+        rows + '</table></div>';
+}
+
+function iaAbsenteeMatchesRoll(absentStr, rObj) {
+    const cleanR = String(absentStr).trim().toUpperCase();
+    const rNum = parseInt(cleanR.replace(/\D/g, ''), 10);
+    if (cleanR === rObj.code) return true;
+    if (!isNaN(rNum) && rNum === rObj.num) return true;
+    if (!isNaN(rNum) && rNum > 0) {
+        const str1 = String(rNum);
+        const str2 = String(rObj.num);
+        if (str1.length >= 2 && str2.length >= 2) {
+            return str1.endsWith(str2) || str2.endsWith(str1);
+        }
+    }
+    return false;
+}
+
+function collectIaSubjectAttendance(yearStr, sectionStr, rollObj) {
+    const stream = iaCurrentStream();
+    const history = readAllHistory();
+    const bySubj = {};
+    history.forEach(item => {
+        if (item.stream && !isStreamMatchEvening(item.stream, stream)) return;
+        if (!isYearMatching(item.year, yearStr)) return;
+        if (item.section && typeof sectionsEqualForSubject === 'function' && !sectionsEqualForSubject(item.section, sectionStr)) return;
+        const subj = String(item.subject || '').trim();
+        if (!subj) return;
+        const dateStr = (typeof normalizeHistoryDate === 'function' ? normalizeHistoryDate(item.date) : item.date) || (typeof getTodayISOString === 'function' ? getTodayISOString() : '');
+        const mk = String(dateStr || '').substring(0, 7);
+        if (!bySubj[subj]) bySubj[subj] = { months: {}, held: 0, missed: 0 };
+        bySubj[subj].held++;
+        if (!bySubj[subj].months[mk]) bySubj[subj].months[mk] = { held: 0, missed: 0 };
+        bySubj[subj].months[mk].held++;
+        const rolls = normalizeRollNumbers(item.rollNumbers);
+        const missed = rolls.some(r => iaAbsenteeMatchesRoll(r, rollObj));
+        if (missed) {
+            bySubj[subj].missed++;
+            bySubj[subj].months[mk].missed++;
+        }
+    });
+    return bySubj;
+}
+
+function isIaLabSubject(subj) {
+    return /\b(lab|practical)\b/i.test(String(subj || ''));
+}
+
+function isIaEnglishCoreSubject(subj) {
+    const s = String(subj || '').trim().toLowerCase();
+    if (!s) return false;
+    if (/\boptional\s*english\b/i.test(s)) return false;
+    return /\benglish\b/i.test(s);
+}
+
+function isIaLanguageElectiveSubject(subj) {
+    return /\b(kannada|kanada|kanad|hindi|hindhi|sanskrit|sanskrith|sanskritha|sanskrut|sanskrutha|sanskritam)\b/i.test(String(subj || ''));
+}
+
+function iaFinalReportSubjectRank(subj, yearStr) {
+    const lab = isIaLabSubject(subj);
+    if (yearStr === 'Third Year') {
+        return lab ? 2 : 1;
+    }
+    if (isIaLanguageElectiveSubject(subj)) return 1;
+    if (isIaEnglishCoreSubject(subj)) return 2;
+    if (lab) return 4;
+    return 3;
+}
+
+function sortIaFinalReportSubjects(subjects, yearStr) {
+    return (subjects || []).slice().sort(function (a, b) {
+        const ra = iaFinalReportSubjectRank(a, yearStr);
+        const rb = iaFinalReportSubjectRank(b, yearStr);
+        if (ra !== rb) return ra - rb;
+        return String(a).localeCompare(String(b));
+    });
+}
+
+function listIaReportSubjects(yearStr, sectionStr) {
+    const stream = iaCurrentStream();
+    const fromConfig = getSubjectsForActiveYear(stream, yearStr, sectionStr) || [];
+    const store = readInternalMarksStore();
+    const fromMarks = [];
+    Object.keys(store).forEach(k => {
+        const parts = k.split('|');
+        if (parts.length < 5 || parts[0] !== stream || parts[1] !== yearStr) return;
+        const keySec = parts[2] || '';
+        const secOk = keySec === (sectionStr || '') ||
+            keySec === 'ALL' ||
+            (typeof sectionsEqualForSubject === 'function' && sectionsEqualForSubject(keySec, sectionStr));
+        if (!secOk) return;
+        const subj = parts[3];
+        if (subj) fromMarks.push(subj);
+    });
+    const history = readAllHistory();
+    const fromHist = [];
+    history.forEach(item => {
+        if (!item.subject) return;
+        if (item.stream && !isStreamMatchEvening(item.stream, stream)) return;
+        if (!isYearMatching(item.year, yearStr)) return;
+        if (item.section && typeof sectionsEqualForSubject === 'function' && !sectionsEqualForSubject(item.section, sectionStr)) return;
+        fromHist.push(item.subject.trim());
+    });
+    const seen = new Set();
+    const out = [];
+    [].concat(fromConfig, fromMarks, fromHist).forEach(s => {
+        const name = String(s || '').trim();
+        if (!name) return;
+        const low = name.toLowerCase();
+        if (seen.has(low)) return;
+        let display = name;
+        if (fromMarks.indexOf(name) !== -1 && name === low) {
+            const nicer = [].concat(fromConfig, fromHist).find(function (x) {
+                return String(x || '').trim().toLowerCase() === low;
+            });
+            if (nicer) display = String(nicer).trim();
+        }
+        seen.add(low);
+        out.push(display);
+    });
+    return sortIaFinalReportSubjects(out, yearStr);
+}
+
+function buildAcademicPerformanceExcelTable(yearStr, sectionStr, semester, rollObj, subjects) {
+    const attMap = collectIaSubjectAttendance(yearStr, sectionStr, rollObj);
+    const monthSet = {};
+    Object.keys(attMap).forEach(function (subj) {
+        Object.keys(attMap[subj].months || {}).forEach(function (mk) {
+            if (monthBelongsToSemester(mk, semester)) monthSet[mk] = true;
+        });
+    });
+    let monthKeys = Object.keys(monthSet).sort();
+    if (monthKeys.length === 0) {
+        Object.keys(attMap).forEach(function (subj) {
+            Object.keys(attMap[subj].months || {}).forEach(function (mk) { monthSet[mk] = true; });
+        });
+        monthKeys = Object.keys(monthSet).sort();
+    }
+    if (monthKeys.length > 4) monthKeys = monthKeys.slice(-4);
+    while (monthKeys.length < 4) monthKeys.push('');
+
+    const td = 'border:1px solid #000;padding:4px 6px;font-size:12px;';
+    const th = td + 'font-weight:700;background:#eee;';
+    let headMonths = '';
+    monthKeys.forEach(function (mk) {
+        const lab = mk ? formatShortageMonthLabel(mk) : '';
+        headMonths += '<th style="' + th + '">' + escapeHTML(lab) + ' Held</th><th style="' + th + '">' + escapeHTML(lab) + ' Att</th>';
+    });
+
+    let bodyRows = '';
+    const rowSubjects = subjects.slice();
+    while (rowSubjects.length < 12) rowSubjects.push('');
+    rowSubjects.forEach(function (subj) {
+        let ia1 = '', ia2 = '';
+        if (subj) {
+            const rec = getIaMark(yearStr, sectionStr, subj, rollObj.code);
+            ia1 = clampIaMark(rec.ia1);
+            ia2 = clampIaMark(rec.ia2);
+        }
+        let attCells = '';
+        monthKeys.forEach(function (mk) {
+            let held = '', att = '';
+            if (subj && mk && attMap[subj] && attMap[subj].months[mk]) {
+                held = attMap[subj].months[mk].held;
+                att = Math.max(0, held - (attMap[subj].months[mk].missed || 0));
+            } else if (subj && mk) {
+                Object.keys(attMap).forEach(function (attSubj) {
+                    if (!iaSubjectsLooselyEqual(attSubj, subj)) return;
+                    if (!attMap[attSubj].months[mk]) return;
+                    held = attMap[attSubj].months[mk].held;
+                    att = Math.max(0, held - (attMap[attSubj].months[mk].missed || 0));
+                });
+            }
+            attCells += '<td style="' + td + 'text-align:center;">' + held + '</td><td style="' + td + 'text-align:center;">' + att + '</td>';
+        });
+        bodyRows += '<tr>' +
+            '<td style="' + td + 'text-align:left;">' + escapeHTML(subj) + '</td>' +
+            '<td style="' + td + 'text-align:center;font-weight:700;">' + escapeHTML(String(ia1)) + '</td>' +
+            '<td style="' + td + 'text-align:center;font-weight:700;">' + escapeHTML(String(ia2)) + '</td>' +
+            attCells + '</tr>';
+    });
+
+    const roster = getStudentRosterEntry(yearStr, sectionStr, rollObj.code);
+    const classLabel = escapeHTML(shortageClassLabel(yearStr, sectionStr, iaCurrentStream()));
+    const nameBit = roster.name ? (' | Name: ' + escapeHTML(roster.name)) : '';
+    const regBit = roster.regNo ? (' | REG.No: ' + escapeHTML(roster.regNo)) : '';
+    const colCount = 3 + (monthKeys.length * 2);
+
+    return '<table style="width:100%;border-collapse:collapse;border:1px solid #000;margin-bottom:22px;font-family:Times New Roman,Times,serif;">' +
+        '<tr><td colspan="' + colCount + '" style="' + td + 'font-weight:800;text-align:center;">' + escapeHTML(MGMEC_OFFICIAL_COLLEGE_NAME) + '</td></tr>' +
+        '<tr><td colspan="' + colCount + '" style="' + td + 'font-weight:800;text-align:center;">' + escapeHTML(semester) + ' Semester — Academic Performance</td></tr>' +
+        '<tr><td colspan="' + colCount + '" style="' + td + '">CLASS: ' + classLabel + ' | ROLL: ' + escapeHTML(rollObj.code) + nameBit + regBit + '</td></tr>' +
+        '<tr><th style="' + th + '">Subject</th><th style="' + th + '">Test I (/10)</th><th style="' + th + '">Test II (/10)</th>' + headMonths + '</tr>' +
+        bodyRows +
+        '</table>';
+}
+
+function buildAcademicPerformanceExcelHtml(yearStr, sectionStr, semester, rollObjects) {
+    const subjects = listIaReportSubjects(yearStr, sectionStr);
+    let html = '';
+    rollObjects.forEach(function (rObj) {
+        html += buildAcademicPerformanceExcelTable(yearStr, sectionStr, semester, rObj, subjects);
+    });
+    return html;
+}
+
+function buildAcademicPerformancePage(yearStr, sectionStr, semester, rollObj, subjects) {
+    const attMap = collectIaSubjectAttendance(yearStr, sectionStr, rollObj);
+    const monthSet = {};
+    Object.keys(attMap).forEach(function (subj) {
+        Object.keys(attMap[subj].months || {}).forEach(function (mk) {
+            if (monthBelongsToSemester(mk, semester)) monthSet[mk] = true;
+        });
+    });
+    let monthKeys = Object.keys(monthSet).sort();
+    if (monthKeys.length === 0) {
+        Object.keys(attMap).forEach(function (subj) {
+            Object.keys(attMap[subj].months || {}).forEach(function (mk) { monthSet[mk] = true; });
+        });
+        monthKeys = Object.keys(monthSet).sort();
+    }
+    if (monthKeys.length > 4) monthKeys = monthKeys.slice(-4);
+    while (monthKeys.length < 4) monthKeys.push('');
+
+    let monthHead = '';
+    let pairHead = '';
+    monthKeys.forEach(function (mk) {
+        const lab = mk ? formatShortageMonthLabel(mk) : '';
+        monthHead += '<th colspan="2" style="border:1px solid #000;padding:3px 4px;font-size:11px;">' + escapeHTML(lab) + '</th>';
+        pairHead += '<th style="border:1px solid #000;padding:2px 4px;font-size:10px;width:28px;">1</th><th style="border:1px solid #000;padding:2px 4px;font-size:10px;width:28px;">2</th>';
+    });
+
+    let bodyRows = '';
+    const rowSubjects = subjects.slice();
+    while (rowSubjects.length < 12) rowSubjects.push('');
+    rowSubjects.forEach(function (subj) {
+        let ia1 = '', ia2 = '';
+        if (subj) {
+            const rec = getIaMark(yearStr, sectionStr, subj, rollObj.code);
+            ia1 = clampIaMark(rec.ia1);
+            ia2 = clampIaMark(rec.ia2);
+        }
+        let attCells = '';
+        monthKeys.forEach(function (mk) {
+            let held = '', att = '';
+            if (subj && mk && attMap[subj] && attMap[subj].months[mk]) {
+                held = attMap[subj].months[mk].held;
+                att = Math.max(0, held - (attMap[subj].months[mk].missed || 0));
+            } else if (subj && mk) {
+                Object.keys(attMap).forEach(function (attSubj) {
+                    if (!iaSubjectsLooselyEqual(attSubj, subj)) return;
+                    if (!attMap[attSubj].months[mk]) return;
+                    held = attMap[attSubj].months[mk].held;
+                    att = Math.max(0, held - (attMap[attSubj].months[mk].missed || 0));
+                });
+            }
+            attCells += '<td style="border:1px solid #000;padding:3px 4px;text-align:center;font-size:11px;">' + held + '</td>' +
+                '<td style="border:1px solid #000;padding:3px 4px;text-align:center;font-size:11px;">' + att + '</td>';
+        });
+        bodyRows += '<tr><td style="border:1px solid #000;padding:3px 6px;font-size:12px;">' + escapeHTML(subj) + '</td>' +
+            '<td style="border:1px solid #000;padding:3px 4px;text-align:center;font-size:12px;">' + escapeHTML(String(ia1)) + '</td>' +
+            '<td style="border:1px solid #000;padding:3px 4px;text-align:center;font-size:12px;">' + escapeHTML(String(ia2)) + '</td>' +
+            attCells + '</tr>';
+    });
+
+    const roster = getStudentRosterEntry(yearStr, sectionStr, rollObj.code);
+    const classLabel = escapeHTML(shortageClassLabel(yearStr, sectionStr, iaCurrentStream()));
+    const nameLine = roster.name ? (' &nbsp; <strong>NAME:</strong> ' + escapeHTML(roster.name)) : '';
+    const regLine = roster.regNo ? (' &nbsp; <strong>REG.No:</strong> ' + escapeHTML(roster.regNo)) : '';
+    return '<div class="ap-page" style="page-break-after:always;margin-bottom:18px;">' +
+        '<div style="text-align:center;font-weight:800;font-size:15px;margin-bottom:2px;">' + escapeHTML(MGMEC_OFFICIAL_COLLEGE_NAME) + '</div>' +
+        '<div style="text-align:center;font-weight:800;font-size:16px;">' + escapeHTML(semester) + ' Semester</div>' +
+        '<div style="text-align:center;font-weight:700;font-size:15px;margin-bottom:8px;">Academic Performance</div>' +
+        '<div style="font-size:13px;margin-bottom:8px;"><strong>CLASS:</strong> ' + classLabel +
+        ' &nbsp; <strong>ROLL:</strong> ' + escapeHTML(rollObj.code) + nameLine + regLine + '</div>' +
+        '<table style="width:100%;border-collapse:collapse;border:1px solid #000;font-family:Times New Roman,Times,serif;">' +
+        '<tr><th rowspan="3" style="border:1px solid #000;padding:4px;font-size:12px;width:28%;">Subject</th>' +
+        '<th colspan="2" style="border:1px solid #000;padding:4px;font-size:12px;">Test / Assignment</th>' +
+        '<th colspan="8" style="border:1px solid #000;padding:4px;font-size:12px;">Attendance *</th></tr>' +
+        '<tr><th colspan="2" style="border:1px solid #000;padding:3px;font-size:11px;"></th>' + monthHead + '</tr>' +
+        '<tr><th style="border:1px solid #000;padding:3px;font-size:11px;">I</th><th style="border:1px solid #000;padding:3px;font-size:11px;">II</th>' + pairHead + '</tr>' +
+        bodyRows +
+        '<tr><td style="border:1px solid #000;padding:14px 6px 6px;font-size:12px;">Signature of the Parent</td><td style="border:1px solid #000;"></td><td style="border:1px solid #000;"></td><td colspan="8" style="border:1px solid #000;"></td></tr>' +
+        '<tr><td style="border:1px solid #000;padding:14px 6px 6px;font-size:12px;">Signature of the Academic Advisor</td><td colspan="10" style="border:1px solid #000;"></td></tr>' +
+        '</table>' +
+        '<div style="font-size:11px;margin-top:6px;font-style:italic;">* 1. Maximum Classes held &nbsp;&nbsp; 2. Number of Classes attended &nbsp;&nbsp; Tests: Max 10 each</div>' +
+        '</div>';
+}
+
+function buildAcademicPerformancePagesHtml(yearStr, sectionStr, semester, rollObjects) {
+    const subjects = listIaReportSubjects(yearStr, sectionStr);
+    let pages = '';
+    rollObjects.forEach(function (rObj) {
+        pages += buildAcademicPerformancePage(yearStr, sectionStr, semester, rObj, subjects);
+    });
+    return pages;
+}
+
+function printAcademicPerformanceReport(yearStr, sectionStr, semester, rollObjects) {
+    const pages = buildAcademicPerformancePagesHtml(yearStr, sectionStr, semester, rollObjects);
+    const html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Academic Performance</title>' +
+        '<style>body{font-family:Times New Roman,Times,serif;color:#000;background:#fff;margin:12px;} .no-print{margin-bottom:12px;} @media print{.no-print{display:none!important;} .ap-page{page-break-after:always;} @page{size:A4 portrait;margin:10mm;}}</style></head><body>' +
+        '<div class="no-print"><button type="button" onclick="window.print()">Print</button></div>' +
+        pages + '</body></html>';
+    printHtmlInNewWindow(html);
+}
+
+function printHtmlInNewWindow(html) {
+    const w = window.open('', '_blank');
+    if (!w) { alert('Please allow pop-ups to print.'); return; }
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    setTimeout(function () { try { w.print(); } catch (e) {} }, 400);
+}
+
+function downloadHtmlAsExcel(innerHtml, filename) {
+    const html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>Report</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head><body>' + innerHtml + '</body></html>';
+    const blob = new Blob(['\ufeff' + html], { type: 'application/vnd.ms-excel' });
+    const fname = filename || 'MGM_Evening_Internal_Marks.xls';
+    if (window.navigator && typeof window.navigator.msSaveOrOpenBlob === 'function') {
+        window.navigator.msSaveOrOpenBlob(blob, fname);
+        return;
+    }
+    const a = document.createElement('a');
+    a.download = fname;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    const reader = new FileReader();
+    reader.onload = function () {
+        a.href = reader.result;
+        a.click();
+        document.body.removeChild(a);
+    };
+    reader.onerror = function () {
+        a.href = URL.createObjectURL(blob);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
+    };
+    reader.readAsDataURL(blob);
+}
+
+function initInternalMarksModule() {
+    const subTabMarks = document.getElementById('subTabInternalMarks');
+    const marksContainer = document.getElementById('hodInternalMarksContainer');
+    const subTabDaily = document.getElementById('subTabDailyInformer');
+    const subTabShortage = document.getElementById('subTabShortageCalculator');
+    const dailyContainer = document.getElementById('hodDailyInformerContainer');
+    const shortageContainer = document.getElementById('hodShortageContainer');
+    const yearSelect = document.getElementById('iaYearSelect');
+    const sectionSelect = document.getElementById('iaSectionSelect');
+    const subjectSelect = document.getElementById('iaSubjectSelect');
+    const semSelect = document.getElementById('iaSemesterSelect');
+    const startRoll = document.getElementById('iaStartRoll');
+    const endRoll = document.getElementById('iaEndRoll');
+    const loadBtn = document.getElementById('iaLoadRollsBtn');
+    const saveBtn = document.getElementById('iaSaveMarksBtn');
+    const applyListBtn = document.getElementById('iaApplyClassListBtn');
+    const classListPaste = document.getElementById('iaClassListPaste');
+    const printClassBtn = document.getElementById('iaPrintClassBtn');
+    const excelClassBtn = document.getElementById('iaExcelClassBtn');
+    const printFinalBtn = document.getElementById('iaPrintFinalBtn');
+    const excelFinalBtn = document.getElementById('iaExcelFinalBtn');
+
+    if (subTabMarks && marksContainer) {
+        subTabMarks.addEventListener('click', function () {
+            subTabMarks.classList.add('active');
+            if (subTabDaily) subTabDaily.classList.remove('active');
+            if (subTabShortage) subTabShortage.classList.remove('active');
+            marksContainer.style.display = 'block';
+            if (dailyContainer) dailyContainer.style.display = 'none';
+            if (shortageContainer) shortageContainer.style.display = 'none';
+            updateIaSectionDropdown();
+            updateIaSubjectDropdown();
+            if (yearSelect && semSelect) semSelect.value = defaultIaSemester(yearSelect.value);
+        });
+    }
+
+    if (yearSelect) {
+        yearSelect.addEventListener('change', function () {
+            updateIaSectionDropdown();
+            updateIaSubjectDropdown();
+            if (semSelect) semSelect.value = defaultIaSemester(yearSelect.value);
+        });
+    }
+    if (sectionSelect) sectionSelect.addEventListener('change', updateIaSubjectDropdown);
+    updateIaSectionDropdown();
+    updateIaSubjectDropdown();
+    if (yearSelect && semSelect) semSelect.value = defaultIaSemester(yearSelect.value);
+
+    if (loadBtn) {
+        loadBtn.addEventListener('click', function () {
+            const yr = yearSelect ? yearSelect.value : 'First Year';
+            const sec = sectionSelect ? sectionSelect.value : 'A';
+            const subj = subjectSelect ? subjectSelect.value : '';
+            const sRoll = startRoll ? startRoll.value.trim() : '';
+            const eRoll = endRoll ? endRoll.value.trim() : '';
+            if (!subj) { alert('Please select a subject.'); if (subjectSelect) subjectSelect.focus(); return; }
+            if (!sRoll && !eRoll) { alert('Please enter a roll range.'); if (startRoll) startRoll.focus(); return; }
+            const rolls = parseMarksRollNumbers(sRoll, eRoll);
+            if (!rolls.length) { alert('Invalid roll numbers. Example: 26701-26760'); return; }
+            currentIaRollObjects = rolls;
+            const btnText = document.getElementById('iaLoadRollsBtnText');
+            if (btnText) btnText.textContent = 'Loading…';
+            fetchIaMarksFromSheet(yr, sec, subj, function () {
+                renderIaMarksGrid(yr, sec, subj, rolls);
+                if (btnText) btnText.textContent = '📋 Load Students for Marks Entry';
+            });
+        });
+    }
+
+    if (applyListBtn) {
+        applyListBtn.addEventListener('click', function () {
+            const yr = yearSelect ? yearSelect.value : 'First Year';
+            const sec = sectionSelect ? sectionSelect.value : 'A';
+            const text = classListPaste ? classListPaste.value : '';
+            if (!String(text || '').trim()) { alert('Paste the class list first (Roll, REG.No, Name).'); return; }
+            if (!currentIaRollObjects.length) { alert('Load students first, then paste the class list.'); return; }
+            const n = applyIaClassListToGrid(text, yr, sec, currentIaRollObjects);
+            if (typeof showCustomToast === 'function') showCustomToast('Class list applied', n + ' name(s) filled for this section.');
+            else alert('Filled ' + n + ' name(s).');
+        });
+    }
+
+    if (saveBtn) {
+        saveBtn.addEventListener('click', function () {
+            const yr = yearSelect ? yearSelect.value : 'First Year';
+            const sec = sectionSelect ? sectionSelect.value : 'A';
+            const subj = subjectSelect ? subjectSelect.value : '';
+            if (!subj || !currentIaRollObjects.length) { alert('Load students first, then save marks.'); return; }
+            const n = saveIaMarksFromGrid(yr, sec, subj);
+            if (typeof showCustomToast === 'function') showCustomToast('Internal marks saved', n + ' students · ' + subj);
+            else alert('Saved marks for ' + n + ' students.');
+        });
+    }
+
+    if (printClassBtn) {
+        printClassBtn.addEventListener('click', function () {
+            const yr = yearSelect ? yearSelect.value : 'First Year';
+            const sec = sectionSelect ? sectionSelect.value : 'A';
+            const subj = subjectSelect ? subjectSelect.value : '';
+            const sem = semSelect ? semSelect.value : defaultIaSemester(yr);
+            if (!subj || !currentIaRollObjects.length) { alert('Load students first.'); return; }
+            saveIaMarksFromGrid(yr, sec, subj);
+            const table = buildOfficialIaMarksTable(yr, sec, subj, currentIaRollObjects, sem);
+            printHtmlInNewWindow('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Internal Marks</title><style>body{font-family:Times New Roman,Times,serif;margin:14px;} .no-print{margin-bottom:12px;} @media print{.no-print{display:none!important;} @page{size:A4 landscape;margin:8mm;}}</style></head><body><div class="no-print"><button type="button" onclick="window.print()">Print</button></div>' + table + '</body></html>');
+        });
+    }
+
+    if (excelClassBtn) {
+        excelClassBtn.addEventListener('click', function () {
+            const yr = yearSelect ? yearSelect.value : 'First Year';
+            const sec = sectionSelect ? sectionSelect.value : 'A';
+            const subj = subjectSelect ? subjectSelect.value : '';
+            const sem = semSelect ? semSelect.value : defaultIaSemester(yr);
+            if (!subj || !currentIaRollObjects.length) { alert('Load students first.'); return; }
+            saveIaMarksFromGrid(yr, sec, subj);
+            const table = buildOfficialIaMarksTable(yr, sec, subj, currentIaRollObjects, sem);
+            downloadHtmlAsExcel(table, 'MGM_Evening_Internal_Marks_' + iaCurrentStream() + '_' + String(subj).replace(/[^\w]+/g, '_') + '.xls');
+        });
+    }
+
+    if (printFinalBtn) {
+        printFinalBtn.addEventListener('click', function () {
+            const yr = yearSelect ? yearSelect.value : 'First Year';
+            const sec = sectionSelect ? sectionSelect.value : 'A';
+            const sem = semSelect ? semSelect.value : 'I';
+            const sRoll = startRoll ? startRoll.value.trim() : '';
+            const eRoll = endRoll ? endRoll.value.trim() : '';
+            let rolls = currentIaRollObjects;
+            if (!rolls.length) rolls = parseMarksRollNumbers(sRoll, eRoll);
+            if (!rolls.length) {
+                alert('Enter a roll range and load students (or print after loading).');
+                return;
+            }
+            const subj = subjectSelect ? subjectSelect.value : '';
+            if (subj && rolls.length) saveIaMarksFromGrid(yr, sec, subj);
+            printAcademicPerformanceReport(yr, sec, sem, rolls);
+        });
+    }
+
+    if (excelFinalBtn) {
+        excelFinalBtn.addEventListener('click', function () {
+            const yr = yearSelect ? yearSelect.value : 'First Year';
+            const sec = sectionSelect ? sectionSelect.value : 'A';
+            const sem = semSelect ? semSelect.value : 'I';
+            const sRoll = startRoll ? startRoll.value.trim() : '';
+            const eRoll = endRoll ? endRoll.value.trim() : '';
+            let rolls = currentIaRollObjects;
+            if (!rolls.length) rolls = parseMarksRollNumbers(sRoll, eRoll);
+            if (!rolls.length) {
+                alert('Enter a roll range and load students first.');
+                return;
+            }
+            const subj = subjectSelect ? subjectSelect.value : '';
+            if (subj && rolls.length) saveIaMarksFromGrid(yr, sec, subj);
+            const pages = buildAcademicPerformanceExcelHtml(yr, sec, sem, rolls);
+            downloadHtmlAsExcel(pages, 'MGM_Evening_Academic_Performance_' + iaCurrentStream() + '_' + sem + '_Sem.xls');
+        });
+    }
+}
+

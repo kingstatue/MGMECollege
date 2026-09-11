@@ -1821,6 +1821,58 @@ body {
   }
 }
 
+.shortage-export-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+@media (min-width: 640px) {
+  .shortage-export-row {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .shortage-export-row > button {
+    flex: 1;
+    min-width: 160px;
+  }
+}
+
+.ia-marks-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.ia-marks-table th,
+.ia-marks-table td {
+  border: 1px solid var(--border-color, #334155);
+  padding: 6px 8px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.ia-marks-table th {
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.ia-marks-table .form-input {
+  min-width: 72px;
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 0.8rem;
+}
+
+.ia-marks-table td:nth-child(2) .form-input,
+.ia-marks-table td:nth-child(3) .form-input {
+  min-width: 110px;
+  text-align: left;
+}
+
 
 
 

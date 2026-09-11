@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mgmec-absentee-informer-v123-bulk-slot-guard';
+const CACHE_NAME = 'mgmec-absentee-informer-v129-flex-paste';
 
 // Install Event - Instant non-blocking activation (0ms SW installation)
 self.addEventListener('install', (event) => {
