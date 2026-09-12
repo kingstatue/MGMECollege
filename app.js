@@ -4877,7 +4877,7 @@ function initSubjectManager() {
 
 // Version upgrade check to purge stale cached cloud subjects on GitHub Pages update
 (function checkAppCacheVersion() {
-    const APP_VER = 'v27.27_paste_prefix';
+    const APP_VER = 'v27.28_no_dup_today';
     if (localStorage.getItem('mgmec_app_ver') !== APP_VER) {
         localStorage.removeItem('mgmec_cloud_subjects');
         localStorage.setItem('mgmec_app_ver', APP_VER);
