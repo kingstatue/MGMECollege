@@ -2483,14 +2483,81 @@ function historySectionFilterMatches(itemSection, filterVal) {
     return historySectionsEquivalent(itemSection, filterVal);
 }
 
+function historySubjectFilterMatches(itemSubject, filterVal) {
+    if (!filterVal || filterVal === 'ALL') return true;
+    if (typeof subjectsAreSame === 'function') return subjectsAreSame(itemSubject, filterVal);
+    return String(itemSubject || '').trim().toLowerCase() === String(filterVal || '').trim().toLowerCase();
+}
+
+/** Subject options for history drawer only — from current year/section/date slice. */
+function populateHistorySubjectFilter() {
+    const subjectFilter = document.getElementById('allHistorySubjectFilter');
+    if (!subjectFilter) return;
+
+    const yearFilter = document.getElementById('allHistoryYearFilter');
+    const sectionFilter = document.getElementById('allHistorySectionFilter');
+    const dateFilter = document.getElementById('allHistoryDateFilter');
+    const selYear = yearFilter ? yearFilter.value : 'ALL';
+    const selSection = sectionFilter ? sectionFilter.value : 'ALL';
+    const selDate = (currentHistoryTabMode === 'ALL' && dateFilter && dateFilter.value)
+        ? normalizeHistoryDate(dateFilter.value)
+        : '';
+    const prev = subjectFilter.value || 'ALL';
+
+    let base = [];
+    if (currentHistoryTabMode === 'ALL') {
+        base = readAllHistory().filter(item => isStreamMatchEvening(item.stream, currentDept));
+    } else {
+        base = getTodayEntries();
+    }
+
+    const subjects = [];
+    const seen = new Set();
+    base.forEach(item => {
+        if (selYear && selYear !== 'ALL' && isYearMatching(item.year, selYear) === false) return;
+        if (!historySectionFilterMatches(item.section, selSection)) return;
+        if (selDate && selDate !== '' && normalizeHistoryDate(item.date) !== selDate) return;
+        const subj = String(item.subject || '').trim();
+        if (!subj) return;
+        const low = subj.toLowerCase();
+        if (seen.has(low)) return;
+        seen.add(low);
+        subjects.push(subj);
+    });
+    subjects.sort((a, b) => a.localeCompare(b));
+
+    subjectFilter.innerHTML = '';
+    const allOpt = document.createElement('option');
+    allOpt.value = 'ALL';
+    allOpt.textContent = 'All Subjects';
+    subjectFilter.appendChild(allOpt);
+    subjects.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s;
+        opt.textContent = s;
+        subjectFilter.appendChild(opt);
+    });
+
+    let keep = 'ALL';
+    if (prev && prev !== 'ALL') {
+        const match = Array.from(subjectFilter.options).find(o =>
+            o.value === prev || historySubjectFilterMatches(o.value, prev)
+        );
+        if (match) keep = match.value;
+    }
+    subjectFilter.value = keep;
+}
+
 function getActiveDrawerEntries() {
     const allItems = readAllHistory();
     const yearFilter = document.getElementById('allHistoryYearFilter');
     const sectionFilter = document.getElementById('allHistorySectionFilter');
+    const subjectFilter = document.getElementById('allHistorySubjectFilter');
     const dateFilter = document.getElementById('allHistoryDateFilter');
 
     const selYear = yearFilter ? yearFilter.value : 'ALL';
     const selSection = sectionFilter ? sectionFilter.value : 'ALL';
+    const selSubject = subjectFilter ? subjectFilter.value : 'ALL';
     const selDate = (currentHistoryTabMode === 'ALL' && dateFilter && dateFilter.value)
         ? normalizeHistoryDate(dateFilter.value)
         : '';
@@ -2505,6 +2572,7 @@ function getActiveDrawerEntries() {
     const matched = base.filter(item => {
         if (selYear && selYear !== 'ALL' && isYearMatching(item.year, selYear) === false) return false;
         if (!historySectionFilterMatches(item.section, selSection)) return false;
+        if (!historySubjectFilterMatches(item.subject, selSubject)) return false;
         if (selDate && selDate !== '' && normalizeHistoryDate(item.date) !== selDate) return false;
         return true;
     });
@@ -2549,9 +2617,11 @@ function initHistoryDrawerTabs() {
     const clearFilterBtn = document.getElementById('clearAllHistoryFilterBtn');
     const yearFilter = document.getElementById('allHistoryYearFilter');
     const sectionFilter = document.getElementById('allHistorySectionFilter');
+    const subjectFilter = document.getElementById('allHistorySubjectFilter');
     const dateFilter = document.getElementById('allHistoryDateFilter');
 
     try { populateHistorySectionFilter(); } catch (e) {}
+    try { populateHistorySubjectFilter(); } catch (e) {}
 
     if (tabToday) {
         tabToday.onclick = (e) => {
@@ -2579,16 +2649,27 @@ function initHistoryDrawerTabs() {
     if (yearFilter) {
         yearFilter.onchange = () => {
             try { populateHistorySectionFilter(); } catch (e) {}
+            try { populateHistorySubjectFilter(); } catch (e) {}
             renderHistoryList();
         };
     }
 
     if (sectionFilter) {
-        sectionFilter.onchange = () => renderHistoryList();
+        sectionFilter.onchange = () => {
+            try { populateHistorySubjectFilter(); } catch (e) {}
+            renderHistoryList();
+        };
+    }
+
+    if (subjectFilter) {
+        subjectFilter.onchange = () => renderHistoryList();
     }
 
     if (dateFilter) {
-        dateFilter.onchange = () => renderHistoryList();
+        dateFilter.onchange = () => {
+            try { populateHistorySubjectFilter(); } catch (e) {}
+            renderHistoryList();
+        };
     }
 
     if (clearFilterBtn) {
@@ -2596,8 +2677,10 @@ function initHistoryDrawerTabs() {
             if (e) e.preventDefault();
             if (yearFilter) yearFilter.value = 'ALL';
             if (sectionFilter) sectionFilter.value = 'ALL';
+            if (subjectFilter) subjectFilter.value = 'ALL';
             if (dateFilter) dateFilter.value = '';
             try { populateHistorySectionFilter(); } catch (e2) {}
+            try { populateHistorySubjectFilter(); } catch (e3) {}
             renderHistoryList();
         };
     }
@@ -2682,6 +2765,7 @@ function fetchAllServerHistory(cb) {
 
 function renderHistoryList() {
     pruneOldHistory();
+    try { populateHistorySubjectFilter(); } catch (e) {}
     const displayEntries = getActiveDrawerEntries();
     updateTodayBadge();
     updateSyncButtonState();

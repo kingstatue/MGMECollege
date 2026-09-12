@@ -24,7 +24,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
 
-  <link rel="stylesheet" href="styles.css?v=v40.31-flex-paste">
+  <link rel="stylesheet" href="styles.css?v=v40.32-hist-subj">
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', function() {
@@ -873,6 +873,9 @@
         <select id="allHistorySectionFilter" class="form-select" style="flex: 1; min-width: 110px; padding: 5px 8px; font-size: 0.78rem;" title="Filter by section" aria-label="Filter by section">
           <option value="ALL">All Sections</option>
         </select>
+        <select id="allHistorySubjectFilter" class="form-select" style="flex: 1; min-width: 110px; padding: 5px 8px; font-size: 0.78rem;" title="Filter by subject" aria-label="Filter by subject">
+          <option value="ALL">All Subjects</option>
+        </select>
         <input type="date" id="allHistoryDateFilter" class="form-input" style="flex: 1; min-width: 120px; padding: 4px 8px; font-size: 0.78rem;" title="Filter by date (All History)" />
         <button type="button" id="clearAllHistoryFilterBtn" class="btn-secondary" style="padding: 4px 8px; font-size: 0.75rem;">Clear</button>
       </div>
@@ -1015,6 +1018,6 @@
   <datalist id="subjectDatalist"></datalist>
 
   <script src="parser.js?v=v40.31-flex-paste"></script>
-  <script src="app.js?v=v40.31-flex-paste"></script>
+  <script src="app.js?v=v40.32-hist-subj"></script>
 </body>
 </html>
