@@ -4877,7 +4877,7 @@ function initSubjectManager() {
 
 // Version upgrade check to purge stale cached cloud subjects on GitHub Pages update
 (function checkAppCacheVersion() {
-    const APP_VER = 'v27.25_flex_paste';
+    const APP_VER = 'v27.27_paste_prefix';
     if (localStorage.getItem('mgmec_app_ver') !== APP_VER) {
         localStorage.removeItem('mgmec_cloud_subjects');
         localStorage.setItem('mgmec_app_ver', APP_VER);
@@ -5518,7 +5518,70 @@ function paperPasteSplitHeaderParts(line) {
     return [];
 }
 
-/** Header line: Year · Section · Subject (no class date). */
+function paperPasteNormalizePrefixValue(raw) {
+    let s = String(raw || '').trim();
+    if (!s) return '';
+    s = s.replace(/^(?:prefix|pref|pfx)\s*[:=\-]?\s*/i, '').trim();
+    return s;
+}
+
+function paperPasteLooksLikePrefix(s) {
+    const t = String(s || '').trim();
+    if (!t || t.length > 12) return false;
+    if (/^(?:prefix|pref|pfx)\b/i.test(t)) return true;
+    const bare = paperPasteNormalizePrefixValue(t);
+    if (!bare || bare.length > 10) return false;
+    return /^[A-Za-z]{0,4}\d{1,5}[A-Za-z]{0,2}$/.test(bare);
+}
+
+function paperPasteStripPrefixFromSubject(subject) {
+    const s = String(subject || '').trim();
+    const m = s.match(/^(.*?)\s+(?:prefix|pref|pfx)\s*[:=\-]?\s*(\S+)\s*$/i);
+    if (m && m[1].trim()) {
+        return { subject: m[1].trim(), prefix: paperPasteNormalizePrefixValue(m[2]) };
+    }
+    return { subject: s, prefix: '' };
+}
+
+function paperPasteExpandRolls(rolls, prefix) {
+    const raw = String(rolls == null ? '' : rolls).trim() || 'NIL';
+    if (/^nil$/i.test(raw) || /^none$/i.test(raw) || /^all present$/i.test(raw)) return 'NIL';
+    const p = String(prefix || '').trim();
+    if (!p || typeof expandShortRollNumbers !== 'function') return raw;
+    const expanded = expandShortRollNumbers(raw, p);
+    return expanded || raw;
+}
+
+function paperPasteReadDefaultPrefix() {
+    const el = document.getElementById('paperPastePrefix');
+    return el ? String(el.value || '').trim() : '';
+}
+
+function paperPastePrefillPrefixField() {
+    const el = document.getElementById('paperPastePrefix');
+    if (!el) return;
+    if (String(el.value || '').trim()) return;
+    let fromUi = '';
+    try {
+        if (typeof getActiveRollPrefixFromUI === 'function') fromUi = getActiveRollPrefixFromUI(false) || '';
+    } catch (e) {}
+    if (fromUi) {
+        el.value = fromUi;
+        return;
+    }
+    try {
+        const yEl = document.getElementById('directYearSelect');
+        const sEl = document.getElementById('directSectionSelect');
+        const year = yEl && yEl.value;
+        const sec = sEl && sEl.value;
+        if (year && sec && typeof getStoredRollPrefix === 'function') {
+            const stored = getStoredRollPrefix(currentDept || 'BCA', year, sec);
+            if (stored) el.value = stored;
+        }
+    } catch (e2) {}
+}
+
+/** Header line: Year · Section · Subject [· Prefix] (no class date). */
 function paperPasteParseBlockHeader(line) {
     const raw = String(line || '').trim();
     if (!raw) return null;
@@ -5529,12 +5592,24 @@ function paperPasteParseBlockHeader(line) {
         const year = paperPasteParseYear(parts[0]) || parts[0];
         let sectionRaw = parts[1].replace(/^SEC(TION)?\s*/i, '').trim();
         const section = paperPasteParseSection(sectionRaw) || sectionRaw;
-        const subject = parts.slice(2).join(' ').trim();
+        let prefix = '';
+        let subjectParts = parts.slice(2);
+        if (subjectParts.length >= 2 && paperPasteLooksLikePrefix(subjectParts[subjectParts.length - 1])) {
+            prefix = paperPasteNormalizePrefixValue(subjectParts[subjectParts.length - 1]);
+            subjectParts = subjectParts.slice(0, -1);
+        }
+        let subject = subjectParts.join(' ').trim();
+        const stripped = paperPasteStripPrefixFromSubject(subject);
+        if (stripped.prefix) {
+            subject = stripped.subject;
+            if (!prefix) prefix = stripped.prefix;
+        }
         if (year && section && subject) {
             return {
                 year: paperPasteParseYear(year) || year,
                 section: section,
-                subject: subject
+                subject: subject,
+                prefix: prefix
             };
         }
     }
@@ -5546,9 +5621,15 @@ function paperPasteParseBlockHeader(line) {
     const secMatch = rest.match(/^(?:sec(?:tion)?\s*)?([A-Za-z0-9()+\-_\/ ]{1,24}?)(?:\s{2,}|\s+)(.+)$/i);
     if (!secMatch) return null;
     const section = paperPasteParseSection(secMatch[1].trim()) || secMatch[1].trim();
-    const subject = String(secMatch[2] || '').trim();
+    let subject = String(secMatch[2] || '').trim();
+    let prefix = '';
+    const stripped = paperPasteStripPrefixFromSubject(subject);
+    if (stripped.prefix) {
+        subject = stripped.subject;
+        prefix = stripped.prefix;
+    }
     if (!section || !subject || paperPasteParseDate(subject)) return null;
-    return { year: year, section: section, subject: subject };
+    return { year: year, section: section, subject: subject, prefix: prefix };
 }
 
 function paperPasteReadDefaultSlot() {
@@ -5557,13 +5638,14 @@ function paperPasteReadDefaultSlot() {
 }
 
 /**
- * Header-block paste:
- *   First Year | A | DBMS
- *   2026-08-01  Slot 1  09, 17
- *   2026-08-02  Slot 2  NIL
+ * Header-block paste (flexible dates + default slot + roll prefix):
+ *   First Year | A | DBMS | Prefix 25A
+ *   1/8  09, 17
+ *   5 Aug  NIL
  */
 function parsePaperPasteText(text) {
     const defaultSlot = paperPasteReadDefaultSlot();
+    const defaultPrefix = paperPasteReadDefaultPrefix();
     const lines = String(text || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
     const errors = [];
     const rows = [];
@@ -5577,10 +5659,18 @@ function parsePaperPasteText(text) {
         const asHeader = !paperPasteLineHasDate(line) ? paperPasteParseBlockHeader(line) : null;
         if (asHeader) {
             blockNo++;
+            let prefix = String(asHeader.prefix || '').trim();
+            if (!prefix) prefix = defaultPrefix;
+            if (!prefix && typeof getStoredRollPrefix === 'function') {
+                try {
+                    prefix = getStoredRollPrefix(currentDept || 'BCA', asHeader.year, asHeader.section) || '';
+                } catch (e) { prefix = ''; }
+            }
             current = {
                 year: asHeader.year,
                 section: asHeader.section,
-                subject: paperPasteResolveSubject(asHeader.subject, asHeader.year, asHeader.section)
+                subject: paperPasteResolveSubject(asHeader.subject, asHeader.year, asHeader.section),
+                prefix: prefix
             };
             return;
         }
@@ -5595,13 +5685,17 @@ function parsePaperPasteText(text) {
             return;
         }
 
+        const rollsRaw = data.rolls || 'NIL';
+        const rolls = paperPasteExpandRolls(rollsRaw, current.prefix);
         const row = {
             date: data.date,
             year: current.year,
             section: current.section,
             subject: current.subject,
             slot: data.slot || defaultSlot,
-            rolls: data.rolls || 'NIL',
+            rolls: rolls,
+            rollsRaw: rollsRaw,
+            prefix: current.prefix || '',
             block: blockNo
         };
         row.subject = paperPasteResolveSubject(row.subject, row.year, row.section);
@@ -5628,28 +5722,48 @@ function parsePaperPasteText(text) {
 function renderPaperPastePreview(parsed) {
     const box = document.getElementById('paperPastePreview');
     if (!box) return;
-    if (!parsed.rows.length) {
-        box.style.display = 'block';
-        box.innerHTML = '<div style="color:#f87171;padding:8px;">Nothing to load. Check header blocks (Year | Section | Subject) and date lines.</div>';
+    box.hidden = false;
+    box.style.display = 'block';
+
+    if (!parsed || !parsed.rows || !parsed.rows.length) {
+        box.innerHTML =
+            '<div class="paper-paste-preview-title">Parsed preview</div>' +
+            '<div class="paper-paste-preview-empty">Nothing to load. Check header blocks (Year | Section | Subject) and date lines.</div>';
+        try { box.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) {}
         return;
     }
-    let html = '';
-    if (parsed.errors.length) {
-        html += '<div style="color:#fbbf24;margin-bottom:6px;">' + parsed.errors.map(e => escapeHTML(e)).join('<br>') + '</div>';
+
+    let html = '<div class="paper-paste-preview-title">Parsed preview (' + parsed.rows.length + ' class' + (parsed.rows.length === 1 ? '' : 'es') + ')</div>';
+    if (parsed.errors && parsed.errors.length) {
+        html += '<div class="paper-paste-preview-warn">' + parsed.errors.map(e => escapeHTML(e)).join('<br>') + '</div>';
     }
-    html += '<table class="ia-marks-table" style="font-size:0.74rem;"><thead><tr><th>Date</th><th>Year</th><th>Sec</th><th>Subject</th><th>Slot</th><th>Absentees</th></tr></thead><tbody>';
+    html += '<div class="paper-paste-preview-scroll"><table class="paper-paste-preview-table"><thead><tr>' +
+        '<th>Date</th><th>Year</th><th>Sec</th><th>Subject</th><th>Slot</th><th>Prefix</th><th>Absentees</th>' +
+        '</tr></thead><tbody>';
     parsed.rows.forEach(r => {
-        html += '<tr><td>' + escapeHTML(r.date) + '</td><td>' + escapeHTML(r.year) + '</td><td>' + escapeHTML(r.section) + '</td><td>' + escapeHTML(r.subject) + '</td><td>' + escapeHTML(r.slot) + '</td><td>' + escapeHTML(r.rolls || 'NIL') + '</td></tr>';
+        const rollsCell = (r.rollsRaw && r.rolls && r.rollsRaw !== r.rolls)
+            ? (escapeHTML(r.rolls) + '<div style="opacity:0.7;font-size:0.68rem;margin-top:2px;">from ' + escapeHTML(r.rollsRaw) + '</div>')
+            : escapeHTML(r.rolls || 'NIL');
+        html += '<tr><td>' + escapeHTML(r.date) + '</td><td>' + escapeHTML(r.year) + '</td><td>' +
+            escapeHTML(r.section) + '</td><td>' + escapeHTML(r.subject) + '</td><td>' +
+            escapeHTML(r.slot) + '</td><td>' + escapeHTML(r.prefix || '—') + '</td><td>' + rollsCell + '</td></tr>';
     });
-    html += '</tbody></table>';
+    html += '</tbody></table></div>';
     box.innerHTML = html;
-    box.style.display = 'block';
+    try { box.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e2) {}
 }
 
 function openPaperPasteModal() {
     const modal = document.getElementById('paperPasteModal');
     if (!modal) return;
     paperPasteCloneSelect('directSlotSelect', 'paperPasteSlot');
+    paperPastePrefillPrefixField();
+    const box = document.getElementById('paperPastePreview');
+    if (box) {
+        box.hidden = true;
+        box.style.display = 'none';
+        box.innerHTML = '';
+    }
     modal.classList.add('active');
 }
 
@@ -5684,6 +5798,9 @@ async function loadPaperPasteToSheet() {
     for (let i = 0; i < ready.length; i++) {
         const row = ready[i];
         try {
+            if (row.prefix && typeof setStoredRollPrefix === 'function') {
+                try { setStoredRollPrefix(currentDept || 'BCA', row.year, row.section, row.prefix); } catch (ePref) {}
+            }
             const result = await submitData(row.date, row.rolls, row.year, row.section, row.subject, row.slot, null, null, null, submitOpts);
             if (result && result.status === 'ok') ok++;
             else if (result && result.status === 'offline') offline++;

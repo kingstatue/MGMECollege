@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mgmec-absentee-informer-v130-hist-subj';
+const CACHE_NAME = 'mgmec-absentee-informer-v132-paste-prefix';
 
 // Install Event - Instant non-blocking activation (0ms SW installation)
 self.addEventListener('install', (event) => {
