@@ -24,7 +24,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
 
-  <link rel="stylesheet" href="styles.css?v=v40.37-space-hdr">
+  <link rel="stylesheet" href="styles.css?v=v40.39-sheet-sync">
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', function() {
@@ -862,7 +862,13 @@
           </div>
           <p class="drawer-subtitle" id="todayDrawerSubtitle">Correct any class you marked today</p>
         </div>
-        <div style="display: flex; gap: 8px; align-items: center;">
+        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+          <button type="button" id="syncSheetHistoryBtn" style="padding: 4px 10px; font-size: 0.72rem; font-weight: 700; border-radius: 6px; cursor: pointer; background: rgba(99, 102, 241, 0.2); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.4);" title="Fetch latest entries from Google Sheet">
+            🔄 Sync Sheet
+          </button>
+          <button type="button" id="clearHistoryCacheBtn" style="padding: 4px 10px; font-size: 0.72rem; font-weight: 700; border-radius: 6px; cursor: pointer; background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3);" title="Clear local browser history cache">
+            🧹 Clear Local Cache
+          </button>
           <button type="button" class="btn-primary" id="syncOfflineBtn" style="display: none; padding: 6px 12px; font-size: 0.78rem;">⚡ Sync Pending (<span id="pendingSyncCount">0</span>)</button>
           <button class="icon-btn" id="closeHistoryBtn" aria-label="Close">&times;</button>
         </div>
@@ -1021,7 +1027,7 @@
 
   <datalist id="subjectDatalist"></datalist>
 
-  <script src="parser.js?v=v40.37-space-hdr"></script>
-  <script src="app.js?v=v40.37-space-hdr"></script>
+  <script src="parser.js?v=v40.39-sheet-sync"></script>
+  <script src="app.js?v=v40.39-sheet-sync"></script>
 </body>
 </html>

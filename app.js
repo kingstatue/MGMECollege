@@ -1582,9 +1582,7 @@ async function submitData(dateVal, rollNumbersRaw, yearVal, sectionVal, subjectV
         }
 
         if (!opts.skipRefresh) {
-            setTimeout(() => {
-                fetchTodayServerHistory();
-            }, 800);
+            scheduleHistoryRefreshFromSheet(cleanDate);
         }
         return { status: 'ok' };
 
@@ -1700,16 +1698,23 @@ async function handleMultiSlotSubmit(dateVal, masterRollRaw, yearVal, sectionVal
         });
     }
 
+    const multiOpts = { skipRefresh: true };
     for (let slotNum = startSlot; slotNum <= endSlot; slotNum++) {
         const slotRollRaw = slotRollMap[slotNum];
         try {
-            const result = await submitData(dateVal, slotRollRaw, yearVal, sectionVal, subjectVal, slotNum, btnElem, textElem, spinnerElem);
+            const result = await submitData(
+                dateVal, slotRollRaw, yearVal, sectionVal, subjectVal, slotNum,
+                btnElem, textElem, spinnerElem, multiOpts
+            );
             if (result && result.status === 'cancelled') {
                 cancelledCount++;
                 break; // stop remaining slots if user cancelled a conflict
             }
             if (result && (result.status === 'ok' || result.status === 'offline')) {
                 successCount++;
+            }
+            if (slotNum < endSlot) {
+                await new Promise(r => setTimeout(r, 350));
             }
         } catch (e) {
             console.warn('Error submitting slot ' + slotNum + ':', e);
@@ -1721,6 +1726,7 @@ async function handleMultiSlotSubmit(dateVal, masterRollRaw, yearVal, sectionVal
             '⚡ ' + successCount + '-Slot Lab Recorded!',
             'Absentees logged for Slots ' + startSlot + ' to ' + endSlot + ' (' + subjectVal + ').'
         );
+        scheduleHistoryRefreshFromSheet(dateVal, 600);
     } else if (cancelledCount > 0) {
         showCustomToast('Submission cancelled', 'No lab slots were saved.');
     }
@@ -2303,6 +2309,70 @@ function historyMatchKey(item) {
     return entryKey(item) + '|' + (item.stream || 'BCA');
 }
 
+/**
+ * Merge sheet entries into local history.
+ * replaceMode 'stream' = Raw Data wins for this stream (Sync / All History).
+ * replaceMode 'dates'  = Raw wins only for given dates (today refresh).
+ * Always keeps offline:true queue and other streams.
+ */
+function applyServerHistoryMerge(stream, serverEntries, replaceMode, dateSet) {
+    const history = readAllHistory();
+    const byKey = new Map();
+    const dates = dateSet instanceof Set ? dateSet : null;
+
+    // Empty sheet payload must not wipe the phone list
+    if ((!serverEntries || serverEntries.length === 0) && (replaceMode === 'stream' || replaceMode === 'dates')) {
+        renderHistoryList();
+        updateSyncButtonState();
+        return history;
+    }
+
+    history.forEach(item => {
+        if (!item) return;
+        const k = historyMatchKey(item);
+        if (item.offline === true) {
+            byKey.set(k, item);
+            return;
+        }
+        const itemStream = item.stream || 'BCA';
+        if (typeof isStreamMatchEvening === 'function'
+            ? !isStreamMatchEvening(itemStream, stream)
+            : itemStream !== stream) {
+            byKey.set(k, item);
+            return;
+        }
+        if (replaceMode === 'stream') return;
+        if (replaceMode === 'dates' && dates && dates.has(normalizeHistoryDate(item.date))) return;
+        byKey.set(k, item);
+    });
+
+    (serverEntries || []).forEach(sEntry => {
+        const k = historyMatchKey(sEntry);
+        byKey.set(k, mergeServerHistoryEntry(sEntry, byKey.get(k)));
+    });
+
+    const merged = compactAttendanceHistory(Array.from(byKey.values()));
+    saveHistoryToLocalStorage(merged);
+    renderHistoryList();
+    updateSyncButtonState();
+    return merged;
+}
+
+function scheduleHistoryRefreshFromSheet(dateVal, delayMs) {
+    const delay = typeof delayMs === 'number' ? delayMs : 800;
+    const d = normalizeHistoryDate(dateVal) || getTodayISOString();
+    const today = getTodayISOString();
+    setTimeout(() => {
+        if (d === today && typeof fetchTodayServerHistory === 'function') {
+            fetchTodayServerHistory();
+        } else if (typeof fetchFullSheetHistory === 'function') {
+            fetchFullSheetHistory(currentDept || 'BCA', { quiet: true });
+        } else if (typeof fetchTodayServerHistory === 'function') {
+            fetchTodayServerHistory();
+        }
+    }, delay);
+}
+
 function fetchTodayServerHistory() {
     if (isFetchingServerHistory) return;
     isFetchingServerHistory = true;
@@ -2315,7 +2385,7 @@ function fetchTodayServerHistory() {
     const timeout = setTimeout(() => {
         isFetchingServerHistory = false;
         try { delete window[cbName]; } catch (e) {}
-    }, 6000);
+    }, 25000);
 
     window[cbName] = function (data) {
         clearTimeout(timeout);
@@ -2323,31 +2393,8 @@ function fetchTodayServerHistory() {
         try { delete window[cbName]; } catch (e) {}
 
         if (data && data.result === 'success' && Array.isArray(data.entries)) {
-            const history = readAllHistory();
-            const byKey = new Map();
-
-            // 1. Keep ALL existing local items first (safeguards local records from being deleted)
-            history.forEach(item => {
-                const k = historyMatchKey(item);
-                byKey.set(k, item);
-            });
-
-            // 2. Add or update with server entries (from other devices/sheet)
-            data.entries.forEach(e => {
-                if (!e) return;
-                const sEntry = mapServerHistoryEntry(e, stream, dateVal);
-                const k = historyMatchKey(sEntry);
-                const existing = byKey.get(k);
-                // Only overwrite if existing entry is absent or synced
-                if (!existing || existing.offline === false) {
-                    byKey.set(k, mergeServerHistoryEntry(sEntry, existing));
-                }
-            });
-
-            const merged = compactAttendanceHistory(Array.from(byKey.values()));
-            saveHistoryToLocalStorage(merged);
-            renderHistoryList();
-            updateSyncButtonState();
+            const serverEntries = data.entries.map(e => mapServerHistoryEntry(e, stream, dateVal));
+            applyServerHistoryMerge(stream, serverEntries, 'dates', new Set([dateVal]));
         }
     };
 
@@ -2365,8 +2412,87 @@ function fetchTodayServerHistory() {
         clearTimeout(timeout);
         isFetchingServerHistory = false;
         try { delete window[cbName]; } catch (e) {}
+        renderHistoryList();
     };
     document.body.appendChild(scriptEl);
+}
+
+function fetchFullSheetHistory(stream, opts) {
+    opts = opts || {};
+    const quiet = !!opts.quiet;
+    stream = stream || currentDept || 'BCA';
+    const targetUrl = getWebhookUrl(stream);
+    if (!targetUrl) return;
+
+    const syncBtn = document.getElementById('syncSheetHistoryBtn');
+    if (syncBtn && !quiet) {
+        syncBtn.disabled = true;
+        syncBtn.textContent = '🔄 Syncing…';
+    }
+    const cbName = 'mgmec_history_full_cb_' + Date.now();
+
+    const finishBtn = () => {
+        if (syncBtn) {
+            syncBtn.disabled = false;
+            syncBtn.textContent = '🔄 Sync Sheet';
+        }
+    };
+
+    const timeout = setTimeout(() => {
+        try { delete window[cbName]; } catch (e) {}
+        finishBtn();
+        if (!quiet) {
+            showCustomToast('⚠️ Sheet Sync Timed Out', 'Try Sync Sheet again — phone list was not replaced.');
+        }
+    }, 45000);
+
+    window[cbName] = function (data) {
+        clearTimeout(timeout);
+        try { delete window[cbName]; } catch (e) {}
+        finishBtn();
+
+        if (data && data.result === 'success' && Array.isArray(data.entries)) {
+            const serverEntries = data.entries.map(e => mapServerHistoryEntry(e, stream, null));
+            applyServerHistoryMerge(stream, serverEntries, 'stream');
+            if (!quiet) {
+                showCustomToast('🔄 Synced with Sheet!', 'Loaded ' + serverEntries.length + ' active entries from Google Sheet.');
+            }
+        } else if (data && (data.error === 'Unauthorized' || data.result === 'error')) {
+            if (!quiet) {
+                showCustomToast('⚠️ Sheet Sync Failed', data.message || 'Passcode unauthorized or sheet error.');
+            }
+        }
+    };
+
+    const params = new URLSearchParams({
+        action: 'get_absentees',
+        stream: stream,
+        date: 'ALL',
+        callback: cbName
+    });
+    appendAuthToParams(params);
+
+    const scriptEl = document.createElement('script');
+    scriptEl.src = targetUrl + (targetUrl.indexOf('?') >= 0 ? '&' : '?') + params.toString();
+    scriptEl.onerror = function () {
+        clearTimeout(timeout);
+        try { delete window[cbName]; } catch (e) {}
+        finishBtn();
+        if (!quiet) {
+            showCustomToast('⚠️ Sheet Sync Failed', 'Network error — could not load Google Sheet.');
+        }
+        renderHistoryList();
+    };
+    document.body.appendChild(scriptEl);
+}
+
+function clearLocalHistoryCache() {
+    if (confirm('Clear local browser history cache?\n\nThis will remove local cached entries and reload fresh entries directly from Google Sheet.')) {
+        try { localStorage.removeItem('mgmec_attendance_history'); } catch (e) {}
+        try { renderHistoryList(); } catch (e2) {}
+        showCustomToast('🧹 Local Cache Cleared!', 'Fetching fresh entries from Google Sheet...');
+        fetchFullSheetHistory(currentDept || 'BCA');
+    }
 }
 
 let currentHistoryTabMode = 'TODAY';
@@ -2707,7 +2833,7 @@ function fetchAllServerHistory(cb) {
         isFetchingAllServerHistory = false;
         try { delete window[cbName]; } catch (e) {}
         if (cb) cb();
-    }, 8000);
+    }, 45000);
 
     window[cbName] = function (data) {
         clearTimeout(timeout);
@@ -2716,27 +2842,8 @@ function fetchAllServerHistory(cb) {
 
         if (data && data.result === 'success' && Array.isArray(data.entries)) {
             const serverEntries = data.entries.map(e => mapServerHistoryEntry(e, stream, null));
-
-            const history = readAllHistory();
-            const byKey = new Map();
-
-            history.forEach(item => {
-                const k = historyMatchKey(item);
-                byKey.set(k, item);
-            });
-
-            serverEntries.forEach(sEntry => {
-                const k = historyMatchKey(sEntry);
-                const existing = byKey.get(k);
-                if (!existing || existing.offline === false) {
-                    byKey.set(k, mergeServerHistoryEntry(Object.assign({}, sEntry), existing));
-                }
-            });
-
-            const merged = compactAttendanceHistory(Array.from(byKey.values()));
-            saveHistoryToLocalStorage(merged);
-            renderHistoryList();
-            updateSyncButtonState();
+            // Same as Sync Sheet: Raw Data wins (fixes sheet↔phone count mismatches)
+            applyServerHistoryMerge(stream, serverEntries, 'stream');
         }
         if (cb) cb();
     };
@@ -2789,9 +2896,9 @@ function renderHistoryList() {
         if (gKey !== lastGroup) {
             lastGroup = gKey;
             const count = displayEntries.filter(x => historyGroupKey(x) === gKey).length;
-            html += '<div class="history-group-header" style="margin: 12px 0 6px; padding: 6px 10px; border-radius: 8px; background: rgba(99,102,241,0.12); border: 1px solid rgba(99,102,241,0.25); font-size: 0.8rem; font-weight: 700; color: var(--text-primary, #e2e8f0); display: flex; justify-content: space-between; align-items: center;">' +
+            html += '<div class="history-group-header" style="margin: 12px 0 6px; padding: 6px 10px; border-radius: 8px; background: rgba(99,102,241,0.12); border: 1px solid rgba(99,102,241,0.25); font-size: 0.8rem; font-weight: 700; color: var(--text-main, #0f172a); display: flex; justify-content: space-between; align-items: center;">' +
                 '<span>' + escapeHTML(historyGroupLabel(item)) + '</span>' +
-                '<span style="font-weight: 600; opacity: 0.75; font-size: 0.72rem;">' + count + ' entr' + (count === 1 ? 'y' : 'ies') + '</span>' +
+                '<span style="font-weight: 600; opacity: 0.8; font-size: 0.72rem;">' + count + ' entr' + (count === 1 ? 'y' : 'ies') + '</span>' +
             '</div>';
         }
 
@@ -4634,15 +4741,30 @@ document.addEventListener('DOMContentLoaded', () => {
         syncOfflineBtn.addEventListener('click', syncOfflineEntries);
     }
 
+    const syncSheetHistoryBtn = document.getElementById('syncSheetHistoryBtn');
+    if (syncSheetHistoryBtn) {
+        syncSheetHistoryBtn.addEventListener('click', () => fetchFullSheetHistory());
+    }
+    const clearHistoryCacheBtn = document.getElementById('clearHistoryCacheBtn');
+    if (clearHistoryCacheBtn) {
+        clearHistoryCacheBtn.addEventListener('click', clearLocalHistoryCache);
+    }
+
     window.addEventListener('online', () => {
         console.log('[Network] Back online - triggering auto-sync...');
-        syncOfflineEntries().then(() => fetchTodayServerHistory());
+        syncOfflineEntries().then(() => {
+            fetchTodayServerHistory();
+            setTimeout(() => fetchFullSheetHistory(currentDept || 'BCA', { quiet: true }), 1500);
+        });
     });
 
     renderHistoryList();
     if (navigator.onLine) {
         setTimeout(() => {
-            syncOfflineEntries().then(() => fetchTodayServerHistory());
+            syncOfflineEntries().then(() => {
+                fetchTodayServerHistory();
+                setTimeout(() => fetchFullSheetHistory(currentDept || 'BCA', { quiet: true }), 1800);
+            });
         }, 2000);
     }
 
@@ -4877,7 +4999,7 @@ function initSubjectManager() {
 
 // Version upgrade check to purge stale cached cloud subjects on GitHub Pages update
 (function checkAppCacheVersion() {
-    const APP_VER = 'v27.30_space_hdr';
+    const APP_VER = 'v27.31_light_hist';
     if (localStorage.getItem('mgmec_app_ver') !== APP_VER) {
         localStorage.removeItem('mgmec_cloud_subjects');
         localStorage.setItem('mgmec_app_ver', APP_VER);
@@ -5426,6 +5548,15 @@ function paperPasteParseDataLine(line, defaultSlot) {
     if (namedSlot) {
         slot = paperPasteParseSlot(namedSlot[0]) || namedSlot[1];
         rest = (rest.slice(0, namedSlot.index) + ' ' + rest.slice(namedSlot.index + namedSlot[0].length)).trim();
+    } else {
+        const bare = rest.match(/^(\d{1,2})(?=\s|$|[,;|])/);
+        if (bare) {
+            const bareSlot = paperPasteParseSlot(bare[1]);
+            if (bareSlot) {
+                slot = bareSlot;
+                rest = rest.slice(bare[0].length).replace(/^[\s,;|]+/, '').trim();
+            }
+        }
     }
 
     let rolls = rest.replace(/^[,;]+/, '').trim();
@@ -5876,6 +6007,9 @@ async function loadPaperPasteToSheet() {
             if (result && result.status === 'ok') ok++;
             else if (result && result.status === 'offline') offline++;
             else cancelled++;
+            if (i < ready.length - 1) {
+                await new Promise(r => setTimeout(r, 300));
+            }
         } catch (e) {
             failed++;
         }
@@ -5885,7 +6019,9 @@ async function loadPaperPasteToSheet() {
     if (loadText) loadText.textContent = 'Load to Sheet';
     if (spinner) spinner.style.display = 'none';
 
-    if (typeof fetchTodayServerHistory === 'function') {
+    if (typeof fetchFullSheetHistory === 'function') {
+        setTimeout(() => fetchFullSheetHistory(currentDept || 'BCA', { quiet: true }), 700);
+    } else if (typeof fetchTodayServerHistory === 'function') {
         setTimeout(fetchTodayServerHistory, 800);
     }
     if (typeof renderHistoryList === 'function') {
