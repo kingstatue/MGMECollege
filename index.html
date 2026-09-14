@@ -24,7 +24,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
 
-  <link rel="stylesheet" href="styles.css?v=v40.39-sheet-sync">
+  <link rel="stylesheet" href="styles.css?v=v40.41-hod-workspace">
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', function() {
@@ -317,27 +317,24 @@
           </div>
 
           <button type="button" class="btn-secondary" id="openPaperPasteModalBtn" style="margin-top: 8px; width: 100%; font-weight: 700;">
-            📋 Paste past classes (header blocks)
+            📋 Paste past classes
           </button>
         </form>
 
       </div>
 
       <!-- HOD PORTAL CONTAINER -->
-      <div class="mode-container" id="hodSection" style="display: none;">
-        <div class="hod-header-card">
-          <div class="hod-title-group" style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 10px;">
+      <div class="mode-container hod-workspace" id="hodSection" style="display: none;">
+        <div class="hod-header-card hod-workspace-chrome">
+          <div class="hod-title-group" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
             <div>
-              <h2 style="font-size: 1.25rem; font-weight: 800; color: var(--text-main); margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">
-                📢 Parent Informer
+              <h2 style="font-size: 1rem; font-weight: 800; color: var(--text-main); margin: 0; display: flex; align-items: center; gap: 8px;">
+                Parent Informer
               </h2>
-              <p style="font-size: 0.82rem; color: var(--text-muted);">
-                Select date to fetch section-wise absentees and generate parent WhatsApp messages.
-              </p>
             </div>
             <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
               <button type="button" class="btn-secondary" onclick="switchMode('typing')" style="padding: 6px 12px; font-size: 0.78rem; font-weight: 600;">
-                ← Back to Mark Absentees
+                ← Mark Absentees
               </button>
               <button type="button" class="btn-secondary" id="hodPasscodeSettingsBtn" style="padding: 6px 12px; font-size: 0.78rem; display: none;">
                 ⚙️ Change Passcodes
@@ -345,21 +342,21 @@
             </div>
           </div>
 
-          <div class="mode-switcher" style="margin-top: 14px; margin-bottom: 4px; background: rgba(0,0,0,0.25); padding: 4px; border-radius: 10px;">
-            <button class="mode-tab active" id="subTabDailyInformer" type="button" style="padding: 8px 12px; font-size: 0.82rem; font-weight: 700;">
-              📱 Daily Absentees Report
+          <div class="mode-switcher hod-sub-tabs" style="margin-top: 10px; margin-bottom: 0; background: rgba(0,0,0,0.25); padding: 4px; border-radius: 10px;">
+            <button class="mode-tab active" id="subTabDailyInformer" type="button" title="Daily Absentees Report">
+              Daily
             </button>
-            <button class="mode-tab" id="subTabShortageCalculator" type="button" style="padding: 8px 12px; font-size: 0.82rem; font-weight: 700;">
-              ⚠️ Attendance Shortage Report (&lt; 75%)
+            <button class="mode-tab" id="subTabShortageCalculator" type="button" title="Attendance Shortage Report">
+              Shortage
             </button>
-            <button class="mode-tab" id="subTabInternalMarks" type="button" style="padding: 8px 12px; font-size: 0.82rem; font-weight: 700;">
-              📝 Internal Marks (2 × 10)
+            <button class="mode-tab" id="subTabInternalMarks" type="button" title="Internal Marks">
+              Marks
             </button>
           </div>
         </div>
 
         <!-- CONTAINER 1: DAILY INFORMER -->
-        <div id="hodDailyInformerContainer">
+        <div id="hodDailyInformerContainer" class="hod-subpanel">
           <div class="hod-header-card" style="margin-top: 0;">
             <div class="hod-filter-row" style="margin-top: 0;">
               <div class="form-group" style="flex: 1; min-width: 140px;">
@@ -400,11 +397,11 @@
         </div>
 
         <!-- CONTAINER 2: SHORTAGE CALCULATOR -->
-        <div id="hodShortageContainer" style="display: none;">
+        <div id="hodShortageContainer" class="hod-subpanel" style="display: none;">
           <div class="hod-header-card" style="border: 1px solid rgba(239, 68, 68, 0.35); background: rgba(239, 68, 68, 0.05);">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
-              <h3 style="font-size: 1.05rem; font-weight: 800; color: #f87171; display: flex; align-items: center; gap: 8px; margin: 0;">
-                ⚠️ Attendance Shortage Report Generator
+              <h3 class="hod-panel-title" style="font-size: 1.05rem; font-weight: 800; color: #f87171; display: flex; align-items: center; gap: 8px; margin: 0;">
+                Shortage filters
               </h3>
               <span class="badge" style="background: rgba(239, 68, 68, 0.2); color: #f87171; font-size: 0.72rem; font-weight: 700;">Roll Range Method</span>
             </div>
@@ -492,11 +489,11 @@
           <div id="shortageResultsContainer" style="display: none; margin-top: 14px;"></div>
         </div>
 
-        <div id="hodInternalMarksContainer" style="display: none;">
+        <div id="hodInternalMarksContainer" class="hod-subpanel" style="display: none;">
           <div class="hod-header-card" style="border: 1px solid rgba(16, 185, 129, 0.35); background: rgba(16, 185, 129, 0.06);">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
-              <h3 style="font-size: 1.05rem; font-weight: 800; color: #34d399; margin: 0;">📝 Internal Marks Entry</h3>
-              <span class="badge" style="background: rgba(16, 185, 129, 0.2); color: #6ee7b7; font-size: 0.72rem; font-weight: 700;">2 Tests · Max 10 each</span>
+              <h3 class="hod-panel-title" style="font-size: 1.05rem; font-weight: 800; color: #34d399; margin: 0;">Marks entry</h3>
+              <span class="badge" style="background: rgba(16, 185, 129, 0.2); color: #6ee7b7; font-size: 0.72rem; font-weight: 700;">2 × 10</span>
             </div>
             <p style="font-size: 0.78rem; color: var(--text-muted); margin: 0 0 12px;">Uses the logged-in stream, year, section and subject. Attendance logging is unchanged.</p>
 
@@ -696,15 +693,8 @@
           <h2>📋 Paste past classes</h2>
           <button class="icon-btn" id="closePaperPasteModalBtn" aria-label="Close modal">&times;</button>
         </div>
-        <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 12px; line-height: 1.45;">
-          Use a <strong>header block</strong> for Year · Section · Subject, then one line per class:
-          <strong>Date · Absentee rolls</strong> (or NIL). Year can be <strong>1st</strong>, <strong>I</strong>, <strong>FY</strong>, <strong>1st Year</strong>, <strong>I BCA</strong>, etc.
-          Headers work with spaces on phone: <em>1 C FOC prefix C0</em> — or pipes: <em>1 | C | FOC</em>.
-          Dates can be <strong>1/8</strong>, <strong>1 Aug</strong>, or <strong>2026-08-01</strong>.
-          Slot is optional — uses <strong>Default Slot</strong> (or write <em>Slot 2</em>).
-          Short rolls (<strong>09, 17</strong>) expand with <strong>Default Prefix</strong> or <em>prefix C0</em> on the header.
-          Preview shows the full rolls before Load.
-          Loads through the same Submit path — conflict checks stay unchanged.
+        <p style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 10px; line-height: 1.4;">
+          Preview before Load. Format is shown in the paste box.
         </p>
         <div class="form-group" style="margin-bottom: 10px;">
           <label for="paperPasteSlot">Default Slot (used when a date line omits Slot)</label>
@@ -1027,7 +1017,7 @@
 
   <datalist id="subjectDatalist"></datalist>
 
-  <script src="parser.js?v=v40.39-sheet-sync"></script>
-  <script src="app.js?v=v40.39-sheet-sync"></script>
+  <script src="parser.js?v=v40.41-hod-workspace"></script>
+  <script src="app.js?v=v40.41-hod-workspace"></script>
 </body>
 </html>

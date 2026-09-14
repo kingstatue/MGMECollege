@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mgmec-absentee-informer-v137-sheet-sync';
+const CACHE_NAME = 'mgmec-absentee-informer-v139-hod-workspace';
 
 // Install Event - Instant non-blocking activation (0ms SW installation)
 self.addEventListener('install', (event) => {

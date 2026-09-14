@@ -1135,6 +1135,16 @@ body {
   gap: 6px;
 }
 
+.history-group-header {
+  color: var(--text-main) !important;
+}
+
+[data-theme="light"] .history-group-header {
+  background: rgba(99, 102, 241, 0.1) !important;
+  border-color: rgba(99, 102, 241, 0.28) !important;
+  color: #0f172a !important;
+}
+
 .history-top {
   display: flex;
   justify-content: space-between;
@@ -1930,6 +1940,85 @@ body {
   top: 0;
   background: var(--bg-card, #1e293b);
 }
+
+/* Parent Informer — selected tool fills the work area (layout only) */
+body:has(#hodModeTab.active) .app-body {
+  gap: 10px;
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+}
+
+body:has(#hodModeTab.active) #hodSection.hod-workspace {
+  display: flex !important;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: calc(100dvh - 132px);
+  width: 100%;
+  gap: 10px;
+}
+
+.hod-workspace-chrome {
+  flex-shrink: 0;
+  margin-bottom: 0 !important;
+  padding: 12px 14px !important;
+}
+
+.hod-sub-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 14;
+  gap: 3px;
+}
+
+.hod-sub-tabs .mode-tab {
+  padding: 10px 8px;
+  font-size: 0.8rem;
+  font-weight: 800;
+  min-height: 42px;
+  justify-content: center;
+  text-align: center;
+}
+
+body:has(#hodModeTab.active) #hodDailyInformerContainer.hod-subpanel:not([style*="none"]),
+body:has(#hodModeTab.active) #hodShortageContainer.hod-subpanel[style*="block"],
+body:has(#hodModeTab.active) #hodInternalMarksContainer.hod-subpanel[style*="block"] {
+  display: flex !important;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  gap: 10px;
+}
+
+body:has(#hodModeTab.active) #hodSectionCardsContainer {
+  flex: 1 1 auto;
+  min-height: 42vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+body:has(#hodModeTab.active) #shortageResultsContainer {
+  flex: 1 1 auto;
+  min-height: 36vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+body:has(#hodModeTab.active) #hodInternalMarksContainer.hod-subpanel[style*="block"] {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 640px) {
+  body:has(#hodModeTab.active) .hod-panel-hint {
+    display: none;
+  }
+  body:has(#hodModeTab.active) .hod-panel-title {
+    font-size: 0.92rem !important;
+  }
+}
+
 
 
 
